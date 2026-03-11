@@ -350,11 +350,14 @@ class LLMHandler:
     def _load_pytorch_model(self, model_path: str, device: str) -> Tuple[bool, str]:
         """Load PyTorch model from path and return (success, status_message)"""
         try:
-            self.llm = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-            if not self.offload_to_cpu:
-                self.llm = self.llm.to(device).to(self.dtype)
-            else:
-                self.llm = self.llm.to("cpu").to(self.dtype)
+            self.llm = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                trust_remote_code=True,
+                torch_dtype=self.dtype,
+                low_cpu_mem_usage=True,
+            )
+            target_device = "cpu" if self.offload_to_cpu else device
+            self.llm = self.llm.to(device=target_device, dtype=self.dtype)
             self.llm.eval()
             self.llm_backend = "pt"
             self.llm_initialized = True
@@ -469,7 +472,8 @@ class LLMHandler:
             (status_message, success)
         """
         try:
-            if device == "auto":
+            device_kind = (device or "auto").split(":", 1)[0]
+            if device_kind == "auto":
                 if torch.cuda.is_available():
                     device = "cuda"
                 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -478,7 +482,7 @@ class LLMHandler:
                     device = "xpu"
                 else:
                     device = "cpu"
-            elif device == "cuda" and not torch.cuda.is_available():
+            elif device_kind == "cuda" and not torch.cuda.is_available():
                 if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                     logger.warning("[initialize] CUDA requested but unavailable. Falling back to MPS.")
                     device = "mps"
@@ -488,7 +492,7 @@ class LLMHandler:
                 else:
                     logger.warning("[initialize] CUDA requested but unavailable. Falling back to CPU.")
                     device = "cpu"
-            elif device == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+            elif device_kind == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
                 if torch.cuda.is_available():
                     logger.warning("[initialize] MPS requested but unavailable. Falling back to CUDA.")
                     device = "cuda"
@@ -498,7 +502,7 @@ class LLMHandler:
                 else:
                     logger.warning("[initialize] MPS requested but unavailable. Falling back to CPU.")
                     device = "cpu"
-            elif device == "xpu" and not (hasattr(torch, 'xpu') and torch.xpu.is_available()):
+            elif device_kind == "xpu" and not (hasattr(torch, 'xpu') and torch.xpu.is_available()):
                 if torch.cuda.is_available():
                     logger.warning("[initialize] XPU requested but unavailable. Falling back to CUDA.")
                     device = "cuda"
@@ -518,14 +522,16 @@ class LLMHandler:
             # produce NaN/inf when naively converted to float16 (different exponent range).
             # The DiT and VAE use float16 on MPS where it actually helps throughput.
             if dtype is None:
-                if device in ["cuda", "xpu"]:
+                device_kind = device.split(":", 1)[0]
+                if device_kind in ["cuda", "xpu"]:
                     self.dtype = torch.bfloat16
                 else:
                     self.dtype = torch.float32
             else:
                 self.dtype = dtype
                 # Keep LM in float32 on MPS for stability.
-                if device == "mps" and self.dtype != torch.float32:
+                device_kind = device.split(":", 1)[0]
+                if device_kind == "mps" and self.dtype != torch.float32:
                     logger.warning(
                         f"[initialize] Overriding requested dtype {self.dtype} to float32 for LM on MPS."
                     )
@@ -614,7 +620,8 @@ class LLMHandler:
 
             if backend == "vllm" and device != "cuda":
                 logger.info(
-                    f"[initialize] vllm backend requires CUDA, using PyTorch backend for device={device}."
+                    f"[initialize] vllm backend requires device='cuda' (no index), "
+                    f"using PyTorch backend for device={device}."
                 )
                 backend = "pt"
 
