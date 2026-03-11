@@ -266,6 +266,12 @@ def main():
         help="Processing device (default: auto)",
     )
     parser.add_argument(
+        "--lm_device",
+        type=str,
+        default=None,
+        help="Override 5Hz LM device (e.g., 'cuda:1'); defaults to --device",
+    )
+    parser.add_argument(
         "--init_llm",
         type=lambda x: x.lower() in ["true", "1", "yes"],
         default=None,
@@ -391,6 +397,11 @@ def main():
         print(f"  DiT model: {args.config_path}")
         print(f"  LM model: {args.lm_model_path}")
         print(f"  Backend: {args.backend}")
+
+    if args.lm_device is None:
+        args.lm_device = os.environ.get("ACESTEP_LM_DEVICE")
+    if args.lm_device:
+        os.environ["ACESTEP_LM_DEVICE"] = args.lm_device
 
     # Auto-enable CPU offload for tier6 GPUs (16-24GB) when using the 4B LM model
     # The 4B LM (~8GB) + DiT (~4.7GB) + VAE + text encoder exceeds 16-20GB with activations
@@ -535,14 +546,15 @@ def main():
                             file=sys.stderr,
                         )
 
+                    lm_device = args.lm_device or args.device
                     print(
-                        f"Initializing 5Hz LM: {args.lm_model_path} on {args.device}..."
+                        f"Initializing 5Hz LM: {args.lm_model_path} on {lm_device}..."
                     )
                     lm_status, lm_success = llm_handler.initialize(
                         checkpoint_dir=checkpoint_dir,
                         lm_model_path=args.lm_model_path,
                         backend=args.backend,
-                        device=args.device,
+                        device=lm_device,
                         offload_to_cpu=args.offload_to_cpu,
                         dtype=None,
                     )

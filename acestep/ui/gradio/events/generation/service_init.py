@@ -41,6 +41,7 @@ def init_service_wrapper(
     quant_value = "int8_weight_only" if quantization else None
 
     gpu_config = get_global_gpu_config()
+    lm_device_override = os.getenv("ACESTEP_LM_DEVICE", "").strip() or None
 
     if sys.platform == "darwin":
         if compile_model:
@@ -100,6 +101,8 @@ def init_service_wrapper(
     if init_llm:
         checkpoint_dir = os.path.join(project_root, "checkpoints")
 
+        if lm_device_override:
+            lm_device = lm_device_override
         lm_status, lm_success = llm_handler.initialize(
             checkpoint_dir=checkpoint_dir,
             lm_model_path=lm_model_path,
