@@ -14,6 +14,13 @@ from acestep.gpu_config import (
     get_global_gpu_config, is_lm_model_size_allowed, find_best_lm_model_on_disk,
     get_gpu_config_for_tier, set_global_gpu_config, GPU_TIER_LABELS, GPU_TIER_CONFIGS,
 )
+from acestep.model_downloader import (
+    check_main_model_exists,
+    check_model_exists,
+    ensure_dit_model,
+    ensure_lm_model,
+    ensure_main_model,
+)
 from .model_config import is_pure_base_model, get_model_type_ui_settings
 
 
@@ -91,6 +98,49 @@ def init_service_wrapper(
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.dirname(current_file))))))
 
+    checkpoint_dir = os.path.join(project_root, "checkpoints")
+
+    # Ensure main model is available (contains Qwen3-Embedding-0.6B).
+    if not check_main_model_exists(checkpoint_dir):
+        try:
+            main_ok, main_msg = ensure_main_model(checkpoint_dir)
+            if not main_ok:
+                logger.warning(f"Main model download failed: {main_msg}")
+        except Exception as exc:
+            logger.warning(f"Failed to download main model: {exc}")
+
+    # Ensure optional default models are present for UI selection.
+    # These downloads are best-effort and should not block initialization.
+    try:
+        dit_ok, dit_msg = ensure_dit_model(
+            "acestep-v15-sft",
+            checkpoints_dir=checkpoint_dir,
+        )
+        if not dit_ok:
+            logger.warning(f"Default SFT model download failed: {dit_msg}")
+    except Exception as exc:
+        logger.warning(f"Failed to download default SFT model: {exc}")
+
+    try:
+        lm_ok, lm_msg = ensure_lm_model(
+            "acestep-5Hz-lm-4B",
+            checkpoints_dir=checkpoint_dir,
+        )
+        if not lm_ok:
+            logger.warning(f"Default 4B LM download failed: {lm_msg}")
+    except Exception as exc:
+        logger.warning(f"Failed to download default 4B LM model: {exc}")
+
+    if check_model_exists("acestep-v15-sft", checkpoint_dir):
+        if config_path != "acestep-v15-sft":
+            logger.info("Switching default DiT model to acestep-v15-sft for Gradio init.")
+            config_path = "acestep-v15-sft"
+
+    if init_llm and check_model_exists("acestep-5Hz-lm-4B", checkpoint_dir):
+        if lm_model_path != "acestep-5Hz-lm-4B":
+            logger.info("Switching default LM model to acestep-5Hz-lm-4B for Gradio init.")
+            lm_model_path = "acestep-5Hz-lm-4B"
+
     status, enable = dit_handler.initialize_service(
         project_root, config_path, device,
         use_flash_attention=use_flash_attention, compile_model=compile_model,
@@ -99,8 +149,6 @@ def init_service_wrapper(
     )
 
     if init_llm:
-        checkpoint_dir = os.path.join(project_root, "checkpoints")
-
         if lm_device_override:
             lm_device = lm_device_override
         lm_status, lm_success = llm_handler.initialize(
