@@ -280,27 +280,34 @@ def _smart_download(
 # Model Registry
 # =============================================================================
 # Main model contains core components (vae, text_encoder, default DiT)
-MAIN_MODEL_REPO = "ACE-Step/Ace-Step1.5"
+MAIN_MODEL_REPO = "Herry2015/Ace-Step1.5"
 
 # Sub-models that can be downloaded separately into the checkpoints directory
 SUBMODEL_REGISTRY: Dict[str, str] = {
     # LM models
-    "acestep-5Hz-lm-0.6B": "ACE-Step/acestep-5Hz-lm-0.6B",
-    "acestep-5Hz-lm-4B": "ACE-Step/acestep-5Hz-lm-4B",
+    "acestep-5Hz-lm-0.6B": MAIN_MODEL_REPO,
+    "acestep-5Hz-lm-4B": MAIN_MODEL_REPO,
     # DiT models
-    "acestep-v15-turbo-shift3": "ACE-Step/acestep-v15-turbo-shift3",
-    "acestep-v15-sft": "ACE-Step/acestep-v15-sft",
-    "acestep-v15-base": "ACE-Step/acestep-v15-base",
-    "acestep-v15-turbo-shift1": "ACE-Step/acestep-v15-turbo-shift1",
-    "acestep-v15-turbo-continuous": "ACE-Step/acestep-v15-turbo-continuous",
+    "acestep-v15-turbo-shift3": MAIN_MODEL_REPO,
+    "acestep-v15-sft": MAIN_MODEL_REPO,
+    "acestep-v15-base": MAIN_MODEL_REPO,
+    "acestep-v15-turbo-shift1": MAIN_MODEL_REPO,
+    "acestep-v15-turbo-continuous": MAIN_MODEL_REPO,
 }
 
-# Components that come from the main model repo (ACE-Step/Ace-Step1.5)
+# Components that come from the main model repo (unified weights bundle)
 MAIN_MODEL_COMPONENTS = [
     "acestep-v15-turbo",      # Default DiT model
     "vae",                     # VAE for audio encoding/decoding
     "Qwen3-Embedding-0.6B",    # Text encoder
     "acestep-5Hz-lm-1.7B",     # Default LM model (1.7B)
+    "acestep-5Hz-lm-0.6B",     # Small LM model (included in unified repo)
+    "acestep-5Hz-lm-4B",       # Large LM model (included in unified repo)
+    "acestep-v15-base",        # Base DiT model (included in unified repo)
+    "acestep-v15-sft",         # SFT DiT model (included in unified repo)
+    "acestep-v15-turbo-shift1",
+    "acestep-v15-turbo-shift3",
+    "acestep-v15-turbo-continuous",
 ]
 
 # Default LM model (included in main model)
@@ -399,6 +406,8 @@ def download_main_model(
     - vae (audio encoder/decoder)
     - Qwen3-Embedding-0.6B (text encoder)
     - acestep-5Hz-lm-1.7B (default LM model)
+    - acestep-5Hz-lm-0.6B / acestep-5Hz-lm-4B (optional LM sizes)
+    - acestep-v15-base / acestep-v15-sft / turbo variants
 
     Args:
         checkpoints_dir: Custom checkpoints directory (optional)
@@ -477,6 +486,15 @@ def download_submodel(
 
     print(f"Downloading {model_name} from {repo_id}...")
     print(f"Destination: {model_path}")
+
+    # If this model is stored in the unified main repo, avoid per-model download.
+    if repo_id == MAIN_MODEL_REPO:
+        return download_main_model(
+            checkpoints_dir=checkpoints_dir,
+            force=force,
+            token=token,
+            prefer_source=prefer_source,
+        )
 
     # Use smart download with automatic fallback
     success, msg = _smart_download(repo_id, model_path, token, prefer_source)
@@ -656,7 +674,11 @@ def print_model_list():
 
     print("\n[Main Model]")
     print(f"  main -> {MAIN_MODEL_REPO}")
-    print("  Contains: vae, Qwen3-Embedding-0.6B, acestep-v15-turbo, acestep-5Hz-lm-1.7B")
+    print("  Contains: vae, Qwen3-Embedding-0.6B, acestep-v15-turbo, acestep-5Hz-lm-1.7B,")
+    print("            acestep-5Hz-lm-0.6B, acestep-5Hz-lm-4B,")
+    print("            acestep-v15-base, acestep-v15-sft,")
+    print("            acestep-v15-turbo-shift1, acestep-v15-turbo-shift3,")
+    print("            acestep-v15-turbo-continuous")
 
     print("\n[Optional LM Models]")
     for name, repo in SUBMODEL_REGISTRY.items():
@@ -689,8 +711,7 @@ Network Detection:
   - Google blocked -> ModelScope (fallback to HuggingFace)
 
 Alternative using huggingface-cli:
-  huggingface-cli download ACE-Step/Ace-Step1.5 --local-dir ./checkpoints
-  huggingface-cli download ACE-Step/acestep-5Hz-lm-0.6B --local-dir ./checkpoints/acestep-5Hz-lm-0.6B
+  huggingface-cli download Herry2015/Ace-Step1.5 --local-dir ./checkpoints
         """
     )
     

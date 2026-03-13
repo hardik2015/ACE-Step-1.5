@@ -5,19 +5,19 @@ from __future__ import annotations
 import os
 
 
-MODEL_REPO_MAPPING = {
-    "acestep-v15-turbo": "ACE-Step/Ace-Step1.5",
-    "acestep-5Hz-lm-1.7B": "ACE-Step/Ace-Step1.5",
-    "vae": "ACE-Step/Ace-Step1.5",
-    "Qwen3-Embedding-0.6B": "ACE-Step/Ace-Step1.5",
-    "acestep-5Hz-lm-0.6B": "ACE-Step/acestep-5Hz-lm-0.6B",
-    "acestep-5Hz-lm-4B": "ACE-Step/acestep-5Hz-lm-4B",
-    "acestep-v15-base": "ACE-Step/acestep-v15-base",
-    "acestep-v15-sft": "ACE-Step/acestep-v15-sft",
-    "acestep-v15-turbo-shift3": "ACE-Step/acestep-v15-turbo-shift3",
-}
+DEFAULT_REPO_ID = "Herry2015/Ace-Step1.5"
 
-DEFAULT_REPO_ID = "ACE-Step/Ace-Step1.5"
+MODEL_REPO_MAPPING = {
+    "acestep-v15-turbo": DEFAULT_REPO_ID,
+    "acestep-5Hz-lm-1.7B": DEFAULT_REPO_ID,
+    "vae": DEFAULT_REPO_ID,
+    "Qwen3-Embedding-0.6B": DEFAULT_REPO_ID,
+    "acestep-5Hz-lm-0.6B": DEFAULT_REPO_ID,
+    "acestep-5Hz-lm-4B": DEFAULT_REPO_ID,
+    "acestep-v15-base": DEFAULT_REPO_ID,
+    "acestep-v15-sft": DEFAULT_REPO_ID,
+    "acestep-v15-turbo-shift3": DEFAULT_REPO_ID,
+}
 
 
 def can_access_google(timeout: float = 3.0) -> bool:
@@ -41,7 +41,7 @@ def download_from_huggingface(repo_id: str, local_dir: str, model_name: str) -> 
 
     from huggingface_hub import snapshot_download
 
-    is_unified_repo = repo_id == DEFAULT_REPO_ID or repo_id == "ACE-Step/Ace-Step1.5"
+    is_unified_repo = repo_id in {DEFAULT_REPO_ID, "ACE-Step/Ace-Step1.5"}
 
     if is_unified_repo:
         download_dir = local_dir
@@ -65,7 +65,7 @@ def download_from_modelscope(repo_id: str, local_dir: str, model_name: str) -> s
 
     from modelscope import snapshot_download
 
-    is_unified_repo = repo_id == DEFAULT_REPO_ID or repo_id == "ACE-Step/Ace-Step1.5"
+    is_unified_repo = repo_id in {DEFAULT_REPO_ID, "ACE-Step/Ace-Step1.5"}
 
     if is_unified_repo:
         download_dir = local_dir

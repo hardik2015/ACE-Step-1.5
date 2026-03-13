@@ -17,8 +17,6 @@ from acestep.gpu_config import (
 from acestep.model_downloader import (
     check_main_model_exists,
     check_model_exists,
-    ensure_dit_model,
-    ensure_lm_model,
     ensure_main_model,
 )
 from .model_config import is_pure_base_model, get_model_type_ui_settings
@@ -108,28 +106,6 @@ def init_service_wrapper(
                 logger.warning(f"Main model download failed: {main_msg}")
         except Exception as exc:
             logger.warning(f"Failed to download main model: {exc}")
-
-    # Ensure optional default models are present for UI selection.
-    # These downloads are best-effort and should not block initialization.
-    try:
-        dit_ok, dit_msg = ensure_dit_model(
-            "acestep-v15-sft",
-            checkpoints_dir=checkpoint_dir,
-        )
-        if not dit_ok:
-            logger.warning(f"Default SFT model download failed: {dit_msg}")
-    except Exception as exc:
-        logger.warning(f"Failed to download default SFT model: {exc}")
-
-    try:
-        lm_ok, lm_msg = ensure_lm_model(
-            "acestep-5Hz-lm-4B",
-            checkpoints_dir=checkpoint_dir,
-        )
-        if not lm_ok:
-            logger.warning(f"Default 4B LM download failed: {lm_msg}")
-    except Exception as exc:
-        logger.warning(f"Failed to download default 4B LM model: {exc}")
 
     if check_model_exists("acestep-v15-sft", checkpoint_dir):
         if config_path != "acestep-v15-sft":

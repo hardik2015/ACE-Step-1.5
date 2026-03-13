@@ -124,86 +124,14 @@ class InitServiceWrapperPathTests(unittest.TestCase):
             f"Double nesting detected: {expected_checkpoints}",
         )
 
-    @patch("acestep.ui.gradio.events.generation.service_init.ensure_lm_model")
-    @patch("acestep.ui.gradio.events.generation.service_init.ensure_dit_model")
     @patch("acestep.ui.gradio.events.generation.service_init.get_global_gpu_config")
-    def test_default_model_downloads_are_attempted(
-        self,
-        mock_gpu_config,
-        mock_ensure_dit_model,
-        mock_ensure_lm_model,
-    ):
-        """Gradio init should attempt to download SFT and 4B LM defaults."""
-        module = self._import_module()
-
-        mock_gpu_config.return_value = MagicMock(
-            available_lm_models=["acestep-5Hz-lm-1.7B"],
-            lm_backend_restriction=None,
-            tier="tier6",
-            gpu_memory_gb=24.0,
-            max_duration_with_lm=600,
-            max_duration_without_lm=600,
-            max_batch_size_with_lm=4,
-            max_batch_size_without_lm=8,
-        )
-        mock_ensure_dit_model.return_value = (True, "ok")
-        mock_ensure_lm_model.return_value = (True, "ok")
-
-        dit_handler = MagicMock()
-        dit_handler.initialize_service.return_value = ("ok", True)
-        dit_handler.model = MagicMock()
-        dit_handler.is_turbo_model.return_value = True
-
-        llm_handler = MagicMock()
-        llm_handler.llm_initialized = False
-
-        module.init_service_wrapper(
-            dit_handler,
-            llm_handler,
-            "/some/project/checkpoints",
-            "acestep-v15-turbo",
-            "cpu",
-            False,  # init_llm
-            None,  # lm_model_path
-            "vllm",
-            False,
-            False,
-            False,
-            False,
-            False,
-        )
-
-        mock_ensure_dit_model.assert_called_once()
-        dit_args, dit_kwargs = mock_ensure_dit_model.call_args
-        dit_model_name = dit_kwargs.get("model_name", dit_args[0] if dit_args else None)
-        self.assertEqual(dit_model_name, "acestep-v15-sft")
-        dit_checkpoints = dit_kwargs.get("checkpoints_dir", dit_args[1] if len(dit_args) > 1 else "")
-        self.assertTrue(
-            str(dit_checkpoints).endswith("checkpoints"),
-            f"Expected checkpoints_dir to end with 'checkpoints', got {dit_checkpoints}",
-        )
-
-        mock_ensure_lm_model.assert_called_once()
-        lm_args, lm_kwargs = mock_ensure_lm_model.call_args
-        lm_model_name = lm_kwargs.get("model_name", lm_args[0] if lm_args else None)
-        self.assertEqual(lm_model_name, "acestep-5Hz-lm-4B")
-        lm_checkpoints = lm_kwargs.get("checkpoints_dir", lm_args[1] if len(lm_args) > 1 else "")
-        self.assertTrue(
-            str(lm_checkpoints).endswith("checkpoints"),
-            f"Expected checkpoints_dir to end with 'checkpoints', got {lm_checkpoints}",
-        )
-
     @patch("acestep.ui.gradio.events.generation.service_init.ensure_main_model")
     @patch("acestep.ui.gradio.events.generation.service_init.check_main_model_exists")
     @patch("acestep.ui.gradio.events.generation.service_init.check_model_exists")
-    @patch("acestep.ui.gradio.events.generation.service_init.ensure_lm_model")
-    @patch("acestep.ui.gradio.events.generation.service_init.ensure_dit_model")
     @patch("acestep.ui.gradio.events.generation.service_init.get_global_gpu_config")
     def test_init_switches_to_sft_and_4b_when_available(
         self,
         mock_gpu_config,
-        mock_ensure_dit_model,
-        mock_ensure_lm_model,
         mock_check_model_exists,
         mock_check_main_model_exists,
         mock_ensure_main_model,
@@ -223,8 +151,6 @@ class InitServiceWrapperPathTests(unittest.TestCase):
         )
         mock_check_main_model_exists.return_value = False
         mock_ensure_main_model.return_value = (True, "ok")
-        mock_ensure_dit_model.return_value = (True, "ok")
-        mock_ensure_lm_model.return_value = (True, "ok")
         mock_check_model_exists.side_effect = lambda name, *_: name in {
             "acestep-v15-sft",
             "acestep-5Hz-lm-4B",
