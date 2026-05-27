@@ -111,6 +111,8 @@ ENV = {
     "ACESTEP_OFFLOAD_DIT_TO_CPU":"false",
     "ACESTEP_NO_INIT":           "false",     # eager-load models at server startup
     "MAX_CUDA_VRAM":             "24",        # tier6b: 4B allowed + no offload
+    "ACESTEP_DTYPE":             "float32",   # T4 (Turing) has no bf16; fp16 overflows
+                                              # to NaN latents — force fp32 for the DiT.
 }
 
 # --------------------------- Server ----------------------------

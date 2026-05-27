@@ -42,6 +42,27 @@ def _resolve_rocm_dtype() -> torch.dtype:
     return dtype
 
 
+def _resolve_acestep_dtype_override() -> Optional[torch.dtype]:
+    """Return an explicit model dtype from ``ACESTEP_DTYPE``, or ``None``.
+
+    Lets users force the DiT/VAE compute dtype.  The primary use case is
+    ``ACESTEP_DTYPE=float32`` to avoid float16 overflow producing NaN/Inf
+    latents on pre-Ampere/Turing CUDA GPUs (e.g. the Tesla T4), which lack
+    native bfloat16 support.  Returns ``None`` when unset or invalid so the
+    caller keeps its automatic dtype selection.
+    """
+    raw = os.environ.get("ACESTEP_DTYPE", "").strip().lower()
+    if not raw:
+        return None
+    dtype = _ROCM_DTYPE_MAP.get(raw)
+    if dtype is None:
+        logger.warning(
+            f"[initialize_service] Unknown ACESTEP_DTYPE={raw!r}; ignoring "
+            "(valid values: float32, float16, bfloat16)."
+        )
+    return dtype
+
+
 class InitServiceOrchestratorMixin:
     """Public ``initialize_service`` orchestration entrypoint."""
 
@@ -89,13 +110,21 @@ class InitServiceOrchestratorMixin:
                     "(set ACESTEP_ROCM_DTYPE=bfloat16 or float16 to override)"
                 )
             elif resolved_device == "cuda":
-                if gpu_config.cuda_supports_bfloat16():
+                dtype_override = _resolve_acestep_dtype_override()
+                if dtype_override is not None:
+                    self.dtype = dtype_override
+                    logger.info(
+                        f"[initialize_service] dtype overridden via "
+                        f"ACESTEP_DTYPE: {self.dtype}"
+                    )
+                elif gpu_config.cuda_supports_bfloat16():
                     self.dtype = torch.bfloat16
                 else:
                     self.dtype = torch.float16
                     logger.info(
                         "[initialize_service] Pre-Ampere CUDA detected: "
-                        "using float16 instead of bfloat16."
+                        "using float16 instead of bfloat16. Set "
+                        "ACESTEP_DTYPE=float32 if you hit NaN/Inf latents."
                     )
             else:
                 self.dtype = torch.bfloat16 if resolved_device == "xpu" else torch.float32
