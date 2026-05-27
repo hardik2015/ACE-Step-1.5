@@ -64,13 +64,15 @@ class _Host(GenerateMusicMixin):
     payloads so tests can assert orchestration sequencing and return behavior.
     """
 
-    def __init__(self, offload_to_cpu: bool = False):
+    def __init__(self, offload_to_cpu: bool = False, is_turbo: bool = False):
         """Initialize deterministic state and stub payloads for orchestration tests."""
         self.model = object()
         self.vae = object()
         self.text_tokenizer = object()
         self.text_encoder = object()
         self.offload_to_cpu = offload_to_cpu
+        self._is_turbo = is_turbo
+        self.sample_rate = 48000
         self.calls: Dict[str, Any] = {}
         self._final_payload = {"audios": [{"tensor": torch.zeros(1, 4), "sample_rate": 48000}], "success": True}
         self._readiness_error = {
@@ -80,6 +82,10 @@ class _Host(GenerateMusicMixin):
             "success": False,
             "error": "Model not fully initialized",
         }
+
+    def is_turbo_model(self):
+        """Return whether this host simulates a turbo model."""
+        return self._is_turbo
 
     def _resolve_generate_music_progress(self, progress):
         """Return provided callback or deterministic no-op callback."""
@@ -110,6 +116,8 @@ class _Host(GenerateMusicMixin):
             "actual_batch_size": 1,
             "actual_seed_list": [77],
             "seed_value_for_ui": 77,
+            "actual_retake_seed_list": None,
+            "retake_seed_value_for_ui": "",
             "audio_duration": kwargs["audio_duration"],
             "repainting_end": kwargs["repainting_end"],
         }
@@ -149,6 +157,9 @@ class _Host(GenerateMusicMixin):
         """Capture payload-builder args and return deterministic success payload."""
         self.calls["_build_generate_music_success_payload"] = kwargs
         return self._final_payload
+
+    def _empty_cache(self):
+        """No-op cache clear for test host."""
 
 
 class GenerateMusicMixinTests(unittest.TestCase):
@@ -193,6 +204,30 @@ class GenerateMusicMixinTests(unittest.TestCase):
         self.assertFalse(out["success"])
         self.assertEqual(out["error"], "boom")
         self.assertIn("Error: boom", out["status_message"])
+
+    def test_repaint_forwards_cached_source_latents_to_service(self):
+        """Generated-source repaint should only override the source-latent input."""
+        host = _Host()
+        source_latents = torch.ones(4, 3)
+
+        out = host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            task_type="repaint",
+            repainting_start=1.0,
+            repainting_end=2.0,
+            source_repaint_latents=source_latents,
+        )
+
+        self.assertEqual(out, host._final_payload)
+        self.assertEqual(
+            "repaint",
+            host.calls["_run_generate_music_service_with_progress"]["task_type"],
+        )
+        self.assertIs(
+            source_latents,
+            host.calls["_run_generate_music_service_with_progress"]["source_repaint_latents"],
+        )
 
 
 class VramPreflightCheckTests(unittest.TestCase):
@@ -255,6 +290,48 @@ class VramPreflightCheckTests(unittest.TestCase):
             guidance_scale=7.0,
         )
         self.assertIsNone(result)
+
+
+class TurboGuidanceScaleTests(unittest.TestCase):
+    """Verify turbo models force guidance_scale to 1.0 (issue #927)."""
+
+    def test_turbo_model_overrides_guidance_scale_to_one(self):
+        """Turbo model should clamp guidance_scale to 1.0 before service call."""
+        host = _Host(is_turbo=True)
+        host._readiness_error = None
+        out = host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            inference_steps=8,
+            guidance_scale=7.0,
+            use_random_seed=False,
+            seed=77,
+            task_type="text2music",
+        )
+        self.assertEqual(out, host._final_payload)
+        self.assertEqual(
+            host.calls["_run_generate_music_service_with_progress"]["guidance_scale"],
+            1.0,
+        )
+
+    def test_non_turbo_model_preserves_guidance_scale(self):
+        """Non-turbo model should keep the user-provided guidance_scale."""
+        host = _Host(is_turbo=False)
+        host._readiness_error = None
+        out = host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            inference_steps=8,
+            guidance_scale=7.0,
+            use_random_seed=False,
+            seed=77,
+            task_type="text2music",
+        )
+        self.assertEqual(out, host._final_payload)
+        self.assertEqual(
+            host.calls["_run_generate_music_service_with_progress"]["guidance_scale"],
+            7.0,
+        )
 
 
 if __name__ == "__main__":

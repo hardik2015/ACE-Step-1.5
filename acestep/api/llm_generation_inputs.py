@@ -26,6 +26,7 @@ class PreparedLlmInputs:
     original_prompt: str
     original_lyrics: str
     format_has_duration: bool
+    global_caption: str = ""
 
 
 def prepare_llm_generation_inputs(
@@ -71,7 +72,7 @@ def prepare_llm_generation_inputs(
     use_cot_language = bool(req.use_cot_language)
     full_analysis_only = bool(req.full_analysis_only)
 
-    if req.task_type == "cover" and selected_handler_device == "mps":
+    if req.task_type in ("cover", "cover-nofsq") and selected_handler_device == "mps":
         if getattr(app_state, "_llm_initialized", False) and getattr(
             llm_handler, "llm_initialized", False
         ):
@@ -202,4 +203,5 @@ def prepare_llm_generation_inputs(
         original_prompt=original_prompt,
         original_lyrics=original_lyrics,
         format_has_duration=format_has_duration,
+        global_caption=getattr(req, "global_caption", "") or "",
     )

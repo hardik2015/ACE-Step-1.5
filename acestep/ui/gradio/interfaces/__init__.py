@@ -31,6 +31,10 @@ from acestep.ui.gradio.interfaces.generation import (
 from acestep.ui.gradio.interfaces.audio_player_preferences import (
     get_audio_player_preferences_head,
 )
+from acestep.ui.gradio.interfaces.user_preferences import (
+    get_user_preferences_head,
+    wire_preference_restore,
+)
 from acestep.ui.gradio.interfaces.result import create_results_section
 from acestep.ui.gradio.interfaces.training import create_training_section
 from acestep.ui.gradio.events import setup_event_handlers, setup_training_event_handlers
@@ -61,7 +65,22 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
     with gr.Blocks(
         title=t("app.title"),
         theme=gr.themes.Soft(),
-        head=get_audio_player_preferences_head(),
+        head=get_audio_player_preferences_head() + ("" if service_mode else get_user_preferences_head()) + """
+        <script>
+        /* Flip tooltips upward when they would overflow the viewport bottom.
+           Handles both .has-info-container and .checkbox-container elements. */
+        document.addEventListener('mouseover', function(e) {
+            var el = e.target.closest('.has-info-container, .checkbox-container');
+            if (!el) return;
+            var rect = el.getBoundingClientRect();
+            if (rect.bottom > window.innerHeight * 0.65) {
+                el.classList.add('tooltip-flip');
+            } else {
+                el.classList.remove('tooltip-flip');
+            }
+        });
+        </script>
+        """,
         css="""
         .main-header {
             text-align: center;
@@ -141,11 +160,16 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         }
 
         /* Hide info text by default and format as tooltip.
-           In Gradio 6, info is often a div following the span[data-testid="block-info"]. */
+           In Gradio 6, info is often a div following the span[data-testid="block-info"].
+           Uses visibility/opacity (not display:none) so the tooltip remains interactive
+           and doesn't collapse when the user moves their mouse onto it to scroll. */
         .has-info-container span[data-testid="block-info"] + div,
         .has-info-container span[data-testid="block-info"] + span,
         .checkbox-container + div {
-            display: none;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.1s ease, visibility 0.1s ease;
+            transition-delay: 0.08s;
             position: absolute;
             background: rgba(25, 25, 25, 0.98);
             color: #ffffff;
@@ -192,11 +216,17 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
             display: none !important;
         }
 
-        /* Show tooltips on hover of the label area or the icon */
+        /* Show tooltips on hover of the label/icon, OR when hovering the tooltip itself.
+           The sibling :hover rule keeps the tooltip visible while the user scrolls it. */
         .has-info-container span[data-testid="block-info"]:hover + div,
         .has-info-container span[data-testid="block-info"]:hover + span,
-        .checkbox-container:hover + div {
-            display: block !important;
+        .has-info-container span[data-testid="block-info"] + div:hover,
+        .has-info-container span[data-testid="block-info"] + span:hover,
+        .checkbox-container:hover + div,
+        .checkbox-container + div:hover {
+            visibility: visible !important;
+            opacity: 1 !important;
+            transition-delay: 0s;
         }
 
         /* High-res info icon using SVG, appended to the label text */
@@ -226,6 +256,28 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         .checkbox-container:hover .label-text::after {
             opacity: 1;
             transform: scale(1.15);
+        }
+
+        /* Cap tooltip height, allow scrolling, and enable pointer events so users
+           can hover over and scroll long tooltips without them collapsing */
+        .has-info-container span[data-testid="block-info"]:hover + div,
+        .has-info-container span[data-testid="block-info"]:hover + span,
+        .has-info-container span[data-testid="block-info"] + div:hover,
+        .has-info-container span[data-testid="block-info"] + span:hover,
+        .checkbox-container:hover + div,
+        .checkbox-container + div:hover {
+            max-height: 40vh;
+            overflow-y: auto;
+            pointer-events: auto;
+        }
+
+        /* Flip tooltip above when near the bottom of the viewport */
+        .has-info-container.tooltip-flip span[data-testid="block-info"] + div,
+        .has-info-container.tooltip-flip span[data-testid="block-info"] + span {
+            bottom: 100%;
+            top: auto;
+            margin-top: 0;
+            margin-bottom: 6px;
         }
 
         /* --- Auto-toggle checkbox row --- */
@@ -316,5 +368,10 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         
         # Connect training event handlers
         setup_training_event_handlers(demo, dit_handler, llm_handler, training_section)
-    
+
+        # Restore user preferences from browser localStorage on page load.
+        # In service mode, skip restore so localStorage cannot override
+        # server-configured init_params or locked controls.
+        wire_preference_restore(demo, generation_section, service_mode=service_mode)
+
     return demo

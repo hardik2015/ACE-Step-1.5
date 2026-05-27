@@ -9,6 +9,7 @@ from loguru import logger
 
 from acestep.ui.gradio.events.results.batch_management_helpers import (
     _build_saved_params,
+    _extract_scores,
     _extract_ui_core_outputs,
 )
 from acestep.ui.gradio.events.results.batch_queue import (
@@ -28,8 +29,10 @@ def generate_with_batch_management(
     reference_audio, audio_duration, batch_size_input, src_audio,
     text2music_audio_code_string, repainting_start, repainting_end,
     instruction_display_gen, audio_cover_strength, cover_noise_strength, task_type,
-    use_adg, cfg_interval_start, cfg_interval_end, shift, infer_method,
-    custom_timesteps, audio_format, lm_temperature,
+    no_fsq, use_adg, cfg_interval_start, cfg_interval_end, shift, infer_method,
+    sampler_mode, velocity_norm_threshold, velocity_ema_factor,
+    dcw_enabled, dcw_mode, dcw_scaler, dcw_high_scaler, dcw_wavelet,
+    custom_timesteps, audio_format, mp3_bitrate, mp3_sample_rate, lm_temperature,
     think_checkbox, lm_cfg_scale, lm_top_k, lm_top_p, lm_negative_prompt,
     use_cot_metas, use_cot_caption, use_cot_language, is_format_caption,
     constrained_decoding_debug,
@@ -42,8 +45,20 @@ def generate_with_batch_management(
     complete_track_classes,
     enable_normalization,
     normalization_db,
+    fade_in_duration,
+    fade_out_duration,
     latent_shift,
     latent_rescale,
+    repaint_mode,
+    repaint_strength,
+    retake_variance,
+    retake_seed,
+    flow_edit_morph,
+    flow_edit_source_caption,
+    flow_edit_source_lyrics,
+    flow_edit_n_min,
+    flow_edit_n_max,
+    flow_edit_n_avg,
     autogen_checkbox,
     current_batch_index,
     total_batches,
@@ -56,6 +71,9 @@ def generate_with_batch_management(
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    if (hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache")
+            and hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+        torch.mps.empty_cache()
     generator = generate_with_progress(
         dit_handler, llm_handler,
         captions, lyrics, bpm, key_scale, time_signature, vocal_language,
@@ -63,14 +81,21 @@ def generate_with_batch_management(
         reference_audio, audio_duration, batch_size_input, src_audio,
         text2music_audio_code_string, repainting_start, repainting_end,
         instruction_display_gen, audio_cover_strength, cover_noise_strength, task_type,
-        use_adg, cfg_interval_start, cfg_interval_end, shift, infer_method,
-        custom_timesteps, audio_format, lm_temperature,
+        no_fsq, use_adg, cfg_interval_start, cfg_interval_end, shift, infer_method,
+        sampler_mode, velocity_norm_threshold, velocity_ema_factor,
+        dcw_enabled, dcw_mode, dcw_scaler, dcw_high_scaler, dcw_wavelet,
+        custom_timesteps, audio_format, mp3_bitrate, mp3_sample_rate, lm_temperature,
         think_checkbox, lm_cfg_scale, lm_top_k, lm_top_p, lm_negative_prompt,
         use_cot_metas, use_cot_caption, use_cot_language, is_format_caption,
         constrained_decoding_debug,
         allow_lm_batch, auto_score, auto_lrc, score_scale,
         lm_batch_chunk_size,
-        enable_normalization, normalization_db, latent_shift, latent_rescale,
+        enable_normalization, normalization_db, fade_in_duration, fade_out_duration,
+        latent_shift, latent_rescale,
+        repaint_mode, repaint_strength,
+        retake_variance, retake_seed,
+        flow_edit_morph, flow_edit_source_caption, flow_edit_source_lyrics,
+        flow_edit_n_min, flow_edit_n_max, flow_edit_n_avg,
         progress,
     )
 
@@ -83,6 +108,16 @@ def generate_with_batch_management(
                 gr.skip(), gr.skip(), gr.skip(), gr.skip(),
                 gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(),
             )
+
+    # Release the generator frame and run GC to reclaim any accelerator memory
+    # that was not yet freed at the end of the inner generator.
+    del generator
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if (hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache")
+            and hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+        torch.mps.empty_cache()
 
     result = final_result_from_inner
     if result is None:
@@ -121,14 +156,20 @@ def generate_with_batch_management(
         reference_audio, audio_duration, batch_size_input, src_audio,
         text2music_audio_code_string, repainting_start, repainting_end,
         instruction_display_gen, audio_cover_strength, cover_noise_strength, task_type,
-        use_adg, cfg_interval_start, cfg_interval_end, shift, infer_method,
-        audio_format, lm_temperature,
+        no_fsq, use_adg, cfg_interval_start, cfg_interval_end, shift, infer_method,
+        sampler_mode, velocity_norm_threshold, velocity_ema_factor,
+        dcw_enabled, dcw_mode, dcw_scaler, dcw_high_scaler, dcw_wavelet,
+        audio_format, mp3_bitrate, mp3_sample_rate,
+        lm_temperature,
         think_checkbox, lm_cfg_scale, lm_top_k, lm_top_p, lm_negative_prompt,
         use_cot_metas, use_cot_caption, use_cot_language,
         constrained_decoding_debug, allow_lm_batch, auto_score, auto_lrc,
         score_scale, lm_batch_chunk_size,
         track_name, complete_track_classes,
-        enable_normalization, normalization_db, latent_shift, latent_rescale,
+        enable_normalization, normalization_db, fade_in_duration, fade_out_duration,
+        latent_shift, latent_rescale,
+        repaint_mode=repaint_mode, repaint_strength=repaint_strength,
+        retake_variance=retake_variance, retake_seed=retake_seed,
     )
 
     next_params = saved_params.copy()
@@ -137,9 +178,12 @@ def generate_with_batch_management(
 
     extra_outputs_from_result = result[46] if len(result) > 46 and result[46] is not None else {}
 
+    scores_from_fg = _extract_scores(result)
+
     batch_queue = store_batch_in_queue(
         batch_queue, current_batch_index,
         all_audio_paths, generation_info, seed_value_for_ui,
+        scores=scores_from_fg,
         codes=codes_to_store,
         allow_lm_batch=allow_lm_batch,
         batch_size=int(batch_size_input),

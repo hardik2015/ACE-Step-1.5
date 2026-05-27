@@ -33,6 +33,9 @@ _EXPECTED_METADATA_KEYS = [
     "infer_method",
     "custom_timesteps",
     "audio_format",
+    "mp3_controls_row",
+    "mp3_bitrate",
+    "mp3_sample_rate",
     "lm_temperature",
     "lm_cfg_scale",
     "lm_top_k",
@@ -50,6 +53,8 @@ _EXPECTED_METADATA_KEYS = [
     "track_name",
     "complete_track_classes",
     "instrumental_checkbox",
+    "retake_variance",
+    "retake_seed",
 ]
 
 def _tuple_string_values(node: ast.AST) -> list[str]:

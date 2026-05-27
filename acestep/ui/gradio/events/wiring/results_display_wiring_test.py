@@ -23,6 +23,10 @@ _EXPECTED_RESTORE_OUTPUT_KEYS = [
     "audio_duration",
     "batch_size_input",
     "inference_steps",
+    "audio_format",
+    "mp3_controls_row",
+    "mp3_bitrate",
+    "mp3_sample_rate",
     "lm_temperature",
     "lm_cfg_scale",
     "lm_top_k",
@@ -35,8 +39,13 @@ _EXPECTED_RESTORE_OUTPUT_KEYS = [
     "complete_track_classes",
     "enable_normalization",
     "normalization_db",
+    "fade_in_duration",
+    "fade_out_duration",
     "latent_shift",
     "latent_rescale",
+    "no_fsq",
+    "retake_variance",
+    "retake_seed",
 ]
 
 _EXPECTED_JS_MARKERS = [

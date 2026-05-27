@@ -30,6 +30,11 @@ def build_cover_strength_controls() -> dict[str, Any]:
     )
     with gr.Group(visible=False) as remix_help_group:
         create_help_button("generation_remix")
+        no_fsq = gr.Checkbox(
+            label="no_fsq",
+            value=False,
+            info="Use source-audio latents directly instead of FSQ-quantized audio codes.",
+        )
     cover_noise_strength = gr.Slider(
         minimum=0.0,
         maximum=1.0,
@@ -43,6 +48,7 @@ def build_cover_strength_controls() -> dict[str, Any]:
     return {
         "audio_cover_strength": audio_cover_strength,
         "remix_help_group": remix_help_group,
+        "no_fsq": no_fsq,
         "cover_noise_strength": cover_noise_strength,
     }
 
@@ -139,9 +145,30 @@ def build_repainting_controls() -> dict[str, Any]:
                 minimum=-1,
                 step=0.1,
             )
+        with gr.Row():
+            repaint_mode = gr.Dropdown(
+                label="Repaint Mode",
+                choices=["conservative", "balanced", "aggressive"],
+                value="balanced",
+                info="conservative=preserve source, aggressive=full regeneration",
+            )
+            repaint_strength = gr.Slider(
+                label="Repaint Strength",
+                minimum=0.0,
+                maximum=1.0,
+                step=0.05,
+                value=0.5,
+                info="0=conservative, 1=aggressive (balanced mode only)",
+            )
+        repaint_strength_memory = gr.State(value=0.5)
     return {
         "repainting_group": repainting_group,
         "repainting_header_html": repainting_header_html,
         "repainting_start": repainting_start,
         "repainting_end": repainting_end,
+        "repaint_mode": repaint_mode,
+        "repaint_strength": repaint_strength,
+        "repaint_strength_memory": repaint_strength_memory,
     }
+
+

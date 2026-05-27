@@ -103,6 +103,27 @@ class BatchManagementWrapperTests(unittest.TestCase):
 
         self.assertEqual(state["store_calls"][0]["codes"], ["code-0", "code-1", "code-2"])
 
+    def test_no_fsq_forwards_to_generation_and_saved_params(self):
+        """Wrapper should pass and persist the Remix no_fsq checkbox."""
+        module, state = load_batch_management_module(is_windows=False)
+        seen = {}
+
+        def _gen(*args, **_kwargs):
+            """Capture positional generation args and yield a standard result."""
+            seen["args"] = args
+            yield build_progress_result(length=48)
+
+        kwargs = _build_call_kwargs(module)
+        kwargs["task_type"] = "cover"
+        kwargs["no_fsq"] = True
+        with patch.dict(module.generate_with_batch_management.__globals__, {"generate_with_progress": _gen}):
+            list(module.generate_with_batch_management(None, None, **kwargs))
+
+        self.assertTrue(seen["args"][23])
+        saved_params = state["store_calls"][0]["generation_params"]
+        self.assertTrue(saved_params["no_fsq"])
+        self.assertEqual(saved_params["task_type"], "cover")
+
     def test_auto_lrc_copies_lrc_fields_to_batch_queue(self):
         """Auto-LRC mode should copy LRC/subtitle payloads into stored queue entry."""
         module, _state = load_batch_management_module(is_windows=False)
@@ -190,6 +211,89 @@ class BatchManagementWrapperTests(unittest.TestCase):
         self.assertEqual(len(state["store_calls"]), 0)
         self.assertTrue(state["warning_messages"])
         self.assertIn("messages.batch_failed", state["warning_messages"][0])
+
+    # ------------------------------------------------------------------
+    # Score persistence regression tests (foreground batch fix)
+    # ------------------------------------------------------------------
+
+    def test_foreground_scores_passed_to_store_batch_in_queue(self):
+        """Foreground generation must extract and pass scores to batch storage."""
+        module, state = load_batch_management_module(is_windows=False)
+
+        def _gen(*_args, **_kwargs):
+            """Yield a result with score values at indices 12-19."""
+            result = list(build_progress_result(length=48))
+            for i in range(8):
+                result[12 + i] = f"8.{i}"
+            yield tuple(result)
+
+        kwargs = _build_call_kwargs(module)
+        with patch.dict(module.generate_with_batch_management.__globals__, {"generate_with_progress": _gen}):
+            list(module.generate_with_batch_management(None, None, **kwargs))
+
+        self.assertEqual(len(state["store_calls"]), 1)
+        scores = state["store_calls"][0]["scores"]
+        self.assertEqual(len(scores), 8)
+        self.assertEqual(scores[0], "8.0")
+        self.assertEqual(scores[7], "8.7")
+
+    def test_foreground_scores_default_empty_when_absent(self):
+        """When result tuple lacks score indices, scores should be empty strings."""
+        module, state = load_batch_management_module(is_windows=False)
+
+        def _gen(*_args, **_kwargs):
+            """Yield a short result with no score data."""
+            yield build_progress_result(length=48)
+
+        kwargs = _build_call_kwargs(module)
+        with patch.dict(module.generate_with_batch_management.__globals__, {"generate_with_progress": _gen}):
+            list(module.generate_with_batch_management(None, None, **kwargs))
+
+        self.assertEqual(len(state["store_calls"]), 1)
+        scores = state["store_calls"][0]["scores"]
+        self.assertEqual(len(scores), 8)
+        self.assertTrue(all(s == "" for s in scores), "Absent scores should default to empty strings")
+
+    # ------------------------------------------------------------------
+    # MPS cache-clearing regression tests (macOS audio-mute fix)
+    # ------------------------------------------------------------------
+
+    def test_mps_cache_cleared_before_and_after_generation_on_mac(self):
+        """On MPS, empty_cache must be called both before and after generation."""
+        module, state = load_batch_management_module(is_windows=False, mps_available=True)
+
+        def _gen(*_args, **_kwargs):
+            """Yield one result for MPS cache-clearing path."""
+            yield build_progress_result(length=48)
+
+        kwargs = _build_call_kwargs(module)
+        with patch.dict(module.generate_with_batch_management.__globals__, {"generate_with_progress": _gen}):
+            list(module.generate_with_batch_management(None, None, **kwargs))
+
+        self.assertGreaterEqual(
+            state["mps_empty_cache_calls"],
+            2,
+            "torch.mps.empty_cache() must be called before and after generation "
+            "on macOS to prevent system audio mute",
+        )
+
+    def test_mps_cache_not_called_when_mps_unavailable(self):
+        """MPS cache clear must not be called when MPS is absent (non-Mac hosts)."""
+        module, state = load_batch_management_module(is_windows=False, mps_available=False)
+
+        def _gen(*_args, **_kwargs):
+            """Yield one result for non-MPS path."""
+            yield build_progress_result(length=48)
+
+        kwargs = _build_call_kwargs(module)
+        with patch.dict(module.generate_with_batch_management.__globals__, {"generate_with_progress": _gen}):
+            list(module.generate_with_batch_management(None, None, **kwargs))
+
+        self.assertEqual(
+            state["mps_empty_cache_calls"],
+            0,
+            "torch.mps.empty_cache() must not be called when MPS is unavailable",
+        )
 
 
 if __name__ == "__main__":

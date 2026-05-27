@@ -27,6 +27,9 @@ _LOAD_METADATA_GENERATION_OUTPUT_KEYS = (
     "infer_method",
     "custom_timesteps",
     "audio_format",
+    "mp3_controls_row",
+    "mp3_bitrate",
+    "mp3_sample_rate",
     "lm_temperature",
     "lm_cfg_scale",
     "lm_top_k",
@@ -44,6 +47,8 @@ _LOAD_METADATA_GENERATION_OUTPUT_KEYS = (
     "track_name",
     "complete_track_classes",
     "instrumental_checkbox",
+    "retake_variance",
+    "retake_seed",
 )
 
 
