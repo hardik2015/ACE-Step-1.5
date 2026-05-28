@@ -3,17 +3,17 @@
 The output notebook has ONE code cell that:
   - applies the stability env from the working ace-step.ipynb
   - clones the user's fork to /kaggle/tmp, runs `uv sync`
-  - launches the SAME `acestep` Gradio UI you've been running (in the background)
-  - connects to it with `gradio_client` and calls the EXACT click-handler the
-    Generate button triggers, with the 78 positional inputs in the order
-    declared in `generation_run_wiring.py`
-  - per-song fields override Gradio defaults; everything else uses Gradio's
-    own defaults (mirroring exactly what your "Generate" click sends)
-  - audio path returned by Gradio is copied to LOCAL_OUT (or uploaded to a
-    Shared Drive folder when OUTPUT_MODE="gdrive")
+  - launches the project's `acestep-api` FastAPI server (background)
+  - submits each song via POST /release_task using the `acestep-v15-sft`
+    DiT model, then polls POST /query_result until the job leaves
+    status 0 (queued/running) -> 1 (succeeded) | 2 (failed)
+  - audio file paths returned by the server are copied (or fetched via
+    GET /v1/audio when the local path is unreachable) into LOCAL_OUT,
+    or uploaded to a Shared Drive folder when OUTPUT_MODE="gdrive"
 
-This is the cleanest possible approach: use the Gradio path that already
-produces music, just drive its button programmatically.
+This is the cleanest possible approach: the FastAPI server already speaks
+JSON in/out (GenerateMusicRequest), so we drop the 78-field positional
+Gradio contract entirely.
 
 Run:  python kaggle/build_notebook.py
 Output: kaggle/acestep_kaggle_2xT4_weekly.ipynb
@@ -22,140 +22,15 @@ import json
 import os
 
 
-# The exact ordered input list bound to the Generate button in
-# acestep/ui/gradio/events/wiring/generation_run_wiring.py (.then chain step 2).
-# DO NOT REORDER — these match Gradio's positional input contract 1:1.
-INPUT_ORDER = [
-    "captions", "lyrics", "bpm", "key_scale", "time_signature", "vocal_language",
-    "inference_steps", "guidance_scale", "random_seed_checkbox", "seed",
-    "reference_audio", "audio_duration", "batch_size_input", "src_audio",
-    "text2music_audio_code_string", "repainting_start", "repainting_end",
-    "instruction_display_gen", "audio_cover_strength", "cover_noise_strength",
-    "task_type", "no_fsq", "use_adg", "cfg_interval_start", "cfg_interval_end",
-    "shift", "infer_method", "sampler_mode", "velocity_norm_threshold",
-    "velocity_ema_factor", "dcw_enabled", "dcw_mode", "dcw_scaler",
-    "dcw_high_scaler", "dcw_wavelet", "custom_timesteps", "audio_format",
-    "mp3_bitrate", "mp3_sample_rate", "lm_temperature", "think_checkbox",
-    "lm_cfg_scale", "lm_top_k", "lm_top_p", "lm_negative_prompt",
-    "use_cot_metas", "use_cot_caption", "use_cot_language",
-    "is_format_caption_state", "constrained_decoding_debug", "allow_lm_batch",
-    "auto_score", "auto_lrc", "score_scale", "lm_batch_chunk_size",
-    "track_name", "complete_track_classes", "enable_normalization",
-    "normalization_db", "fade_in_duration", "fade_out_duration",
-    "latent_shift", "latent_rescale", "repaint_mode", "repaint_strength",
-    "retake_variance", "retake_seed", "flow_edit_morph",
-    "flow_edit_source_caption", "flow_edit_source_lyrics",
-    "flow_edit_n_min", "flow_edit_n_max", "flow_edit_n_avg",
-    "autogen_checkbox", "current_batch_index", "total_batches",
-    "batch_queue", "generation_params_state",
-]
-
-# Per-component defaults mirroring the Gradio UI defaults (sourced from
-# GenerationParams / GenerationConfig dataclasses plus the working demo log).
-UI_DEFAULTS = {
-    "captions": "",
-    "lyrics": "",
-    "bpm": None,
-    "key_scale": "",
-    "time_signature": "",
-    "vocal_language": "unknown",            # what produced music in the working demo
-    "inference_steps": 50,
-    "guidance_scale": 7.0,
-    "random_seed_checkbox": True,           # use_random_seed
-    "seed": -1,
-    "reference_audio": None,
-    "audio_duration": -1.0,                 # -1 -> LM picks (consistent codes/latents)
-    "batch_size_input": 1,
-    "src_audio": None,
-    "text2music_audio_code_string": "",
-    "repainting_start": 0.0,
-    "repainting_end": -1.0,
-    "instruction_display_gen": "Fill the audio semantic mask based on the given conditions:",
-    "audio_cover_strength": 1.0,
-    "cover_noise_strength": 0.0,
-    "task_type": "text2music",
-    "no_fsq": False,
-    "use_adg": False,
-    "cfg_interval_start": 0.0,
-    "cfg_interval_end": 1.0,
-    "shift": 1.0,
-    "infer_method": "ode",
-    "sampler_mode": "euler",
-    "velocity_norm_threshold": 0.0,
-    "velocity_ema_factor": 0.0,
-    "dcw_enabled": True,
-    "dcw_mode": "double",
-    "dcw_scaler": 0.05,
-    "dcw_high_scaler": 0.02,
-    "dcw_wavelet": "haar",
-    "custom_timesteps": "",
-    "audio_format": "mp3",
-    "mp3_bitrate": "128k",
-    "mp3_sample_rate": 48000,
-    "lm_temperature": 0.85,
-    "think_checkbox": True,                 # thinking=True
-    "lm_cfg_scale": 2.0,
-    "lm_top_k": 0,
-    "lm_top_p": 0.9,
-    "lm_negative_prompt": "NO USER INPUT",
-    "use_cot_metas": True,
-    "use_cot_caption": False,               # KEY: no LM caption rewrite
-    "use_cot_language": True,               # MATCHES the working Gradio run
-    "is_format_caption_state": False,
-    "constrained_decoding_debug": False,
-    "allow_lm_batch": True,
-    "auto_score": False,
-    "auto_lrc": False,
-    "score_scale": 1.0,
-    "lm_batch_chunk_size": 8,
-    "track_name": "",
-    "complete_track_classes": "",
-    "enable_normalization": True,
-    "normalization_db": -1.0,
-    "fade_in_duration": 0.0,
-    "fade_out_duration": 0.0,
-    "latent_shift": 0.0,
-    "latent_rescale": 1.0,
-    "repaint_mode": "balanced",
-    "repaint_strength": 0.5,
-    "retake_variance": 0.0,
-    "retake_seed": None,
-    "flow_edit_morph": False,
-    "flow_edit_source_caption": "",
-    "flow_edit_source_lyrics": "",
-    "flow_edit_n_min": 0.0,
-    "flow_edit_n_max": 1.0,
-    "flow_edit_n_avg": 1,
-    "autogen_checkbox": False,
-    "current_batch_index": 0,
-    "total_batches": 1,
-    "batch_queue": [],
-    "generation_params_state": None,
-}
-
-# Aliases the song JSON may use -> the UI field name in INPUT_ORDER.
-SONG_ALIASES = {
-    "prompt": "captions",
-    "caption": "captions",
-    "keyscale": "key_scale",
-    "timesignature": "time_signature",
-    "duration": "audio_duration",
-    "batch_size": "batch_size_input",
-    "thinking": "think_checkbox",
-    "use_random_seed": "random_seed_checkbox",
-}
-
-
 # ---------------------------------------------------------------------------
 # The notebook cell — orchestration only.
 # ---------------------------------------------------------------------------
 NOTEBOOK_CELL_TEMPLATE = r'''# =============================================================================
-# ACE-Step 2x T4 — single-cell headless generator (Gradio-API driven)
+# ACE-Step 2x T4 - single-cell headless generator (REST API driven)
 #
-# Launches the SAME Gradio UI you already use successfully, then drives its
-# Generate button via gradio_client (no UI clicks, no in-process reimpl).
-# Per-song fields override Gradio defaults; everything else mirrors what the
-# UI sends when you click Generate.
+# Launches the project's FastAPI server (`acestep-api`, registered in
+# pyproject.toml -> acestep.api_server:main) and submits jobs via HTTP.
+# Uses the `acestep-v15-sft` DiT model. Per-song fields override defaults.
 #
 # Prereqs:
 #   - Kaggle: Settings -> Accelerator = GPU T4 x2, Internet = ON
@@ -186,27 +61,29 @@ SONG_JSON_INLINE = r"""
 }
 """
 
-# Defaults merged UNDER each song. Field names match the song-JSON API style.
+# Defaults merged UNDER each song. Field names match GenerateMusicRequest
+# (acestep/api/http/release_task_models.py). Per-song JSON overrides win.
 GEN_DEFAULTS = {
-    "thinking":          True,
-    "use_cot_caption":   False,    # KEY: keeps YOUR caption
-    "use_cot_language":  True,     # matches the working Gradio run
-    "use_cot_metas":     True,
-    "inference_steps":   50,
-    "guidance_scale":    7.0,
-    "use_random_seed":   True,
-    "audio_format":      "mp3",
-    "batch_size":        1,
-    # No "duration" => the LM picks (consistent codes/latents -> clean audio).
+    "model":              "acestep-v15-sft",   # SFT DiT (registered in model_download.py)
+    "thinking":           True,                # use 5Hz LM to generate audio codes
+    "use_cot_caption":    False,               # keep YOUR caption verbatim
+    "use_cot_language":   True,
+    "use_format":         False,
+    "inference_steps":    50,
+    "guidance_scale":     7.0,
+    "use_random_seed":    True,
+    "audio_format":       "mp3",
+    "batch_size":         1,
+    "lm_backend":         "pt",                # matches STABILITY_ENV layout below
+    "lm_cfg_scale":       2.0,
+    # No "audio_duration" => the LM picks (consistent codes/latents).
 }
 
-# The Gradio API endpoint name. The Generate button wires three handlers via
-# .click(...).then(...).then(...); the second one (the actual generator) is
-# what we want. The notebook prints view_api() so you can confirm the name.
-GRADIO_API_NAME = None        # e.g. "/lambda_1"; None => auto-detect by signature
-
 # Multi-GPU layout (matches the working ace-step.ipynb).
+# ACESTEP_CONFIG_PATH selects the primary DiT model loaded at startup; we point
+# it at the SFT checkpoint so requests routed to "acestep-v15-sft" hit it.
 STABILITY_ENV = {
+    "ACESTEP_CONFIG_PATH":         "acestep-v15-sft",
     "ACESTEP_DTYPE":               "float32",
     "ACESTEP_LM_DEVICE":           "cuda:1",
     "ACESTEP_LM_BACKEND":          "pt",
@@ -222,18 +99,20 @@ STABILITY_ENV = {
     "ACESTEP_GENERATION_TIMEOUT":  "1800",
 }
 
-GRADIO_PORT = 7860
-GRADIO_LOG  = "/kaggle/working/gradio.log"
-GRADIO_READY_TIMEOUT_S = 60 * 30           # first run downloads ~13GB weights
+API_HOST = "127.0.0.1"
+API_PORT = 8001
+API_BASE = f"http://{API_HOST}:{API_PORT}"
+API_LOG  = "/kaggle/working/acestep_api.log"
+API_READY_TIMEOUT_S = 60 * 30           # first run downloads ~13GB weights
 
-# ----- HARD-CODED UI CONTRACT (from generation_run_wiring.py) ----------------
-INPUT_ORDER   = __INPUT_ORDER__
-UI_DEFAULTS   = __UI_DEFAULTS__
-SONG_ALIASES  = __SONG_ALIASES__
+# Poll cadence for /query_result (status 0 = queued/running, 1 = succeeded, 2 = failed)
+JOB_POLL_INTERVAL_S = 5
+JOB_TIMEOUT_S       = 60 * 60           # per-song wall clock budget
 
 # ----- IMPLEMENTATION --------------------------------------------------------
-import os, sys, json, time, shutil, subprocess, pathlib, datetime, shlex
+import os, sys, json, time, shutil, subprocess, pathlib, datetime
 import urllib.request
+import urllib.parse
 
 
 def sh(cmd, cwd=None, check=True):
@@ -273,73 +152,61 @@ else:
 # 5) Build the project's .venv with pinned torch.
 sh("uv sync", cwd=WORK_DIR, check=False)
 
-# 6) Install gradio_client in the Kaggle notebook process (we drive Gradio from
-#    here over HTTP -- no need to import acestep here).
-sh(f"{sys.executable} -m pip install -q 'gradio_client>=1.0.0'")
-from gradio_client import Client
-
-# 7) Launch Gradio in the background using the project .venv (same command as
-#    your working ace-step.ipynb, without ngrok).
-def _gradio_alive():
+# 6) Launch acestep-api in the background using the project .venv.
+def _api_alive():
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{GRADIO_PORT}/config", timeout=5)
-        return True
+        with urllib.request.urlopen(f"{API_BASE}/health", timeout=5) as r:
+            return r.status == 200
     except Exception:
         return False
 
-if not _gradio_alive():
-    log_f = open(GRADIO_LOG, "w")
-    cmd = ["uv", "run", "acestep",
-           "--device", "cuda", "--backend", "pt",
-           "--lm_device", "cuda:1",
-           "--server-name", "127.0.0.1",
-           "--port", str(GRADIO_PORT)]
-    print("launching:", " ".join(cmd), f"(logs -> {GRADIO_LOG})")
+if not _api_alive():
+    log_f = open(API_LOG, "w")
+    cmd = ["uv", "run", "acestep-api",
+           "--host", API_HOST,
+           "--port", str(API_PORT),
+           "--lm-model-path", "acestep-5Hz-lm-0.6B"]
+    print("launching:", " ".join(cmd), f"(logs -> {API_LOG})")
     proc = subprocess.Popen(cmd, cwd=WORK_DIR, env=os.environ.copy(),
                             stdout=log_f, stderr=subprocess.STDOUT)
-    print(f"gradio pid={proc.pid}, waiting up to {GRADIO_READY_TIMEOUT_S}s for /config ...")
-    deadline = time.time() + GRADIO_READY_TIMEOUT_S
+    print(f"acestep-api pid={proc.pid}, waiting up to {API_READY_TIMEOUT_S}s for /health ...")
+    deadline = time.time() + API_READY_TIMEOUT_S
     while time.time() < deadline:
         if proc.poll() is not None:
-            print("gradio exited early. Tail of log:")
-            with open(GRADIO_LOG) as f:
-                print("".join(f.readlines()[-50:]))
-            raise RuntimeError("gradio failed to start")
-        if _gradio_alive():
+            print("acestep-api exited early. Tail of log:")
+            with open(API_LOG) as f:
+                print("".join(f.readlines()[-80:]))
+            raise RuntimeError("acestep-api failed to start")
+        if _api_alive():
             break
         time.sleep(5)
     else:
-        raise TimeoutError("gradio not ready in time")
-print(f"gradio ready on http://127.0.0.1:{GRADIO_PORT}")
+        raise TimeoutError("acestep-api not ready in time")
+print(f"acestep-api ready on {API_BASE}")
 
-# 8) Connect with gradio_client and print the discovered endpoints.
-client = Client(f"http://127.0.0.1:{GRADIO_PORT}", verbose=False)
-api = client.view_api(return_format="dict")
-print("=== Gradio API endpoints (named_endpoints) ===")
-named = (api or {}).get("named_endpoints", {})
-for name, spec in named.items():
-    n_params = len(spec.get("parameters", []))
-    n_out = len(spec.get("returns", []))
-    print(f"  {name}: parameters={n_params}, returns={n_out}")
 
-def _autodetect_endpoint(api_dict, expected_params=78):
-    """Find the endpoint whose parameter count matches the Generate handler."""
-    candidates = []
-    for name, spec in (api_dict or {}).get("named_endpoints", {}).items():
-        n = len(spec.get("parameters", []))
-        n_out = len(spec.get("returns", []))
-        candidates.append((name, n, n_out))
-    # Prefer exact match on parameter count; then "closest above 50".
-    exact = [c for c in candidates if c[1] == expected_params]
-    if exact:
-        return exact[0][0]
-    candidates.sort(key=lambda c: (abs(c[1] - expected_params), -c[1]))
-    return candidates[0][0] if candidates else None
+# 7) HTTP helpers (no extra dependencies; uses urllib).
+def _api_post(path, body):
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        f"{API_BASE}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read().decode("utf-8"))
 
-target_endpoint = GRADIO_API_NAME or _autodetect_endpoint(api, expected_params=len(INPUT_ORDER))
-print(f"\nUsing endpoint: {target_endpoint}")
 
-# 9) Resolve song input.
+def _api_download(server_path, dest_path):
+    """Pull audio bytes via /v1/audio (server path-scoped to temp dir)."""
+    qs = urllib.parse.urlencode({"path": server_path})
+    with urllib.request.urlopen(f"{API_BASE}/v1/audio?{qs}", timeout=120) as r, \
+         open(dest_path, "wb") as out:
+        shutil.copyfileobj(r, out)
+
+
+# 8) Resolve song input.
 if INPUT_MODE == "file":
     with open(INPUT_JSON_PATH) as f:
         songs_data = json.load(f)
@@ -354,71 +221,101 @@ else:
 print(f"songs: {len(songs)}")
 
 
-def _build_positional(song):
-    """Merge GEN_DEFAULTS + UI_DEFAULTS + song (per-field overrides) and
-    produce the positional list in INPUT_ORDER (matches the wiring)."""
-    merged = dict(UI_DEFAULTS)
-    # Apply GEN_DEFAULTS first (API-style names, mapped through SONG_ALIASES)
-    for k, v in GEN_DEFAULTS.items():
-        merged[SONG_ALIASES.get(k, k)] = v
-    # Then per-song overrides
+def _build_request_body(song):
+    """Merge GEN_DEFAULTS + per-song overrides into a GenerateMusicRequest body.
+
+    Maps common aliases (caption/captions -> prompt, duration -> audio_duration,
+    keyscale -> key_scale, timesignature -> time_signature) for ergonomics.
+    """
+    aliases = {
+        "caption":        "prompt",
+        "captions":       "prompt",
+        "keyscale":       "key_scale",
+        "timesignature":  "time_signature",
+        "duration":       "audio_duration",
+    }
+    body = dict(GEN_DEFAULTS)
     for k, v in song.items():
-        if k in ("title",):
+        if k == "title":
             continue
-        merged[SONG_ALIASES.get(k, k)] = v
-    return [merged[name] for name in INPUT_ORDER]
+        body[aliases.get(k, k)] = v
+    return body
 
 
-# 10) Run generation, one song at a time, on the same shared init.
+def _wait_for_job(task_id, deadline):
+    """Poll /query_result until the job leaves status 0. Returns the parsed
+    result list (a list of dicts with 'file', 'metas', etc.)."""
+    last_progress = ""
+    while time.time() < deadline:
+        resp = _api_post("/query_result", {"task_id_list": [task_id]})
+        items = (resp or {}).get("data") or []
+        if not items:
+            time.sleep(JOB_POLL_INTERVAL_S)
+            continue
+        item = items[0]
+        status = item.get("status", 0)
+        progress = item.get("progress_text") or ""
+        if progress and progress != last_progress:
+            print(f"    .. {progress}")
+            last_progress = progress
+        if status == 1:
+            try:
+                return json.loads(item.get("result") or "[]")
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"could not parse result JSON: {exc}") from exc
+        if status == 2:
+            raise RuntimeError(f"job {task_id} failed: {item.get('result')}")
+        time.sleep(JOB_POLL_INTERVAL_S)
+    raise TimeoutError(f"job {task_id} did not finish within {JOB_TIMEOUT_S}s")
+
+
+# 9) Run generation, one song at a time, on the same shared init.
 os.makedirs(LOCAL_OUT, exist_ok=True)
 manifest = []
 for i, song in enumerate(songs, 1):
     title = (song.get("title") or song.get("prompt") or song.get("caption") or f"song{i}")[:80]
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     print(f"\n[gen {i}/{len(songs)}] {title!r}")
-    positional = _build_positional(song)
-    try:
-        result = client.predict(*positional, api_name=target_endpoint)
-    except Exception as exc:
-        # Gradio sometimes returns the chain index via fn_index instead;
-        # try a couple of fallbacks.
-        print(f"  predict via api_name failed: {exc}")
-        fallback_indices = [1, 2, 0]
-        result = None
-        for idx in fallback_indices:
-            try:
-                result = client.predict(*positional, fn_index=idx)
-                print(f"  fallback succeeded via fn_index={idx}")
-                break
-            except Exception as e2:
-                print(f"  fn_index={idx} failed: {e2}")
-        if result is None:
-            raise
+    body = _build_request_body(song)
 
-    # The first 8 outputs are generated_audio_1..8; with batch_size=1 only the
-    # first is populated. Each value is the local server file path.
-    audio_outputs = result[:8] if isinstance(result, (list, tuple)) else [result]
+    submit = _api_post("/release_task", body)
+    submit_data = (submit or {}).get("data") or {}
+    task_id = submit_data.get("task_id")
+    if not task_id:
+        raise RuntimeError(f"release_task did not return task_id: {submit}")
+    print(f"    task_id={task_id} queue_position={submit_data.get('queue_position')}")
+
+    deadline = time.time() + JOB_TIMEOUT_S
+    results = _wait_for_job(task_id, deadline)
+
     saved = []
-    for ai, ao in enumerate(audio_outputs, 1):
-        # Gradio_client commonly returns a dict like {"path": "...", "url": "..."}
-        path = ao if isinstance(ao, str) else (ao or {}).get("path") if isinstance(ao, dict) else None
-        if not path:
+    for ai, item in enumerate(results, 1):
+        server_path = item.get("file") or ""
+        if not server_path:
             continue
-        if not os.path.exists(path):
-            print(f"  [{ai}] gradio reported path {path} but it doesn't exist")
-            continue
-        dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_{ai}{pathlib.Path(path).suffix}")
-        shutil.copy2(path, dst)
+        ext = pathlib.Path(server_path).suffix or f".{GEN_DEFAULTS['audio_format']}"
+        dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_{ai}{ext}")
+        if os.path.exists(server_path):
+            # API server runs in the same container, so the file is reachable.
+            shutil.copy2(server_path, dst)
+        else:
+            _api_download(server_path, dst)
         print(f"   -> {dst} ({os.path.getsize(dst)//1024} KB)")
         saved.append(dst)
-    manifest.append({"index": i, "title": title, "paths": saved, "success": bool(saved)})
+    manifest.append({
+        "index": i,
+        "title": title,
+        "task_id": task_id,
+        "paths": saved,
+        "success": bool(saved),
+    })
 
 # Manifest
 with open(os.path.join(LOCAL_OUT, "manifest.json"), "w", encoding="utf-8") as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
 print(f"\nmanifest -> {LOCAL_OUT}/manifest.json")
 
-# 11) Optional Google Drive upload (Shared Drive folder required for SA).
+# 10) Optional Google Drive upload (Shared Drive folder required for SA).
 if OUTPUT_MODE == "gdrive":
     try:
         from kaggle_secrets import UserSecretsClient
@@ -464,19 +361,13 @@ else:
 
 
 def build_notebook(out_path: str) -> None:
-    cell_source = (
-        NOTEBOOK_CELL_TEMPLATE
-        .replace("__INPUT_ORDER__", repr(INPUT_ORDER))
-        .replace("__UI_DEFAULTS__", repr(UI_DEFAULTS))
-        .replace("__SONG_ALIASES__", repr(SONG_ALIASES))
-    )
     nb = {
         "cells": [{
             "cell_type": "code",
             "metadata": {},
             "execution_count": None,
             "outputs": [],
-            "source": cell_source,
+            "source": NOTEBOOK_CELL_TEMPLATE,
         }],
         "metadata": {
             "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
