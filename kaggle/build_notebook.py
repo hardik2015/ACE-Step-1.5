@@ -1,450 +1,499 @@
-"""Generate the ACE-Step 2x T4 weekly Kaggle notebook (.ipynb).
+"""Generate the ACE-Step single-cell Kaggle notebook (.ipynb).
+
+The output notebook has ONE code cell that:
+  - applies the stability env from the working ace-step.ipynb
+  - clones the user's fork to /kaggle/tmp, runs `uv sync`
+  - launches the SAME `acestep` Gradio UI you've been running (in the background)
+  - connects to it with `gradio_client` and calls the EXACT click-handler the
+    Generate button triggers, with the 78 positional inputs in the order
+    declared in `generation_run_wiring.py`
+  - per-song fields override Gradio defaults; everything else uses Gradio's
+    own defaults (mirroring exactly what your "Generate" click sends)
+  - audio path returned by Gradio is copied to LOCAL_OUT (or uploaded to a
+    Shared Drive folder when OUTPUT_MODE="gdrive")
+
+This is the cleanest possible approach: use the Gradio path that already
+produces music, just drive its button programmatically.
 
 Run:  python kaggle/build_notebook.py
-Produces: kaggle/acestep_kaggle_2xT4_weekly.ipynb
+Output: kaggle/acestep_kaggle_2xT4_weekly.ipynb
 """
 import json
 import os
 
-cells = []
+
+# The exact ordered input list bound to the Generate button in
+# acestep/ui/gradio/events/wiring/generation_run_wiring.py (.then chain step 2).
+# DO NOT REORDER — these match Gradio's positional input contract 1:1.
+INPUT_ORDER = [
+    "captions", "lyrics", "bpm", "key_scale", "time_signature", "vocal_language",
+    "inference_steps", "guidance_scale", "random_seed_checkbox", "seed",
+    "reference_audio", "audio_duration", "batch_size_input", "src_audio",
+    "text2music_audio_code_string", "repainting_start", "repainting_end",
+    "instruction_display_gen", "audio_cover_strength", "cover_noise_strength",
+    "task_type", "no_fsq", "use_adg", "cfg_interval_start", "cfg_interval_end",
+    "shift", "infer_method", "sampler_mode", "velocity_norm_threshold",
+    "velocity_ema_factor", "dcw_enabled", "dcw_mode", "dcw_scaler",
+    "dcw_high_scaler", "dcw_wavelet", "custom_timesteps", "audio_format",
+    "mp3_bitrate", "mp3_sample_rate", "lm_temperature", "think_checkbox",
+    "lm_cfg_scale", "lm_top_k", "lm_top_p", "lm_negative_prompt",
+    "use_cot_metas", "use_cot_caption", "use_cot_language",
+    "is_format_caption_state", "constrained_decoding_debug", "allow_lm_batch",
+    "auto_score", "auto_lrc", "score_scale", "lm_batch_chunk_size",
+    "track_name", "complete_track_classes", "enable_normalization",
+    "normalization_db", "fade_in_duration", "fade_out_duration",
+    "latent_shift", "latent_rescale", "repaint_mode", "repaint_strength",
+    "retake_variance", "retake_seed", "flow_edit_morph",
+    "flow_edit_source_caption", "flow_edit_source_lyrics",
+    "flow_edit_n_min", "flow_edit_n_max", "flow_edit_n_avg",
+    "autogen_checkbox", "current_batch_index", "total_batches",
+    "batch_queue", "generation_params_state",
+]
+
+# Per-component defaults mirroring the Gradio UI defaults (sourced from
+# GenerationParams / GenerationConfig dataclasses plus the working demo log).
+UI_DEFAULTS = {
+    "captions": "",
+    "lyrics": "",
+    "bpm": None,
+    "key_scale": "",
+    "time_signature": "",
+    "vocal_language": "unknown",            # what produced music in the working demo
+    "inference_steps": 50,
+    "guidance_scale": 7.0,
+    "random_seed_checkbox": True,           # use_random_seed
+    "seed": -1,
+    "reference_audio": None,
+    "audio_duration": -1.0,                 # -1 -> LM picks (consistent codes/latents)
+    "batch_size_input": 1,
+    "src_audio": None,
+    "text2music_audio_code_string": "",
+    "repainting_start": 0.0,
+    "repainting_end": -1.0,
+    "instruction_display_gen": "Fill the audio semantic mask based on the given conditions:",
+    "audio_cover_strength": 1.0,
+    "cover_noise_strength": 0.0,
+    "task_type": "text2music",
+    "no_fsq": False,
+    "use_adg": False,
+    "cfg_interval_start": 0.0,
+    "cfg_interval_end": 1.0,
+    "shift": 1.0,
+    "infer_method": "ode",
+    "sampler_mode": "euler",
+    "velocity_norm_threshold": 0.0,
+    "velocity_ema_factor": 0.0,
+    "dcw_enabled": True,
+    "dcw_mode": "double",
+    "dcw_scaler": 0.05,
+    "dcw_high_scaler": 0.02,
+    "dcw_wavelet": "haar",
+    "custom_timesteps": "",
+    "audio_format": "mp3",
+    "mp3_bitrate": "128k",
+    "mp3_sample_rate": 48000,
+    "lm_temperature": 0.85,
+    "think_checkbox": True,                 # thinking=True
+    "lm_cfg_scale": 2.0,
+    "lm_top_k": 0,
+    "lm_top_p": 0.9,
+    "lm_negative_prompt": "NO USER INPUT",
+    "use_cot_metas": True,
+    "use_cot_caption": False,               # KEY: no LM caption rewrite
+    "use_cot_language": True,               # MATCHES the working Gradio run
+    "is_format_caption_state": False,
+    "constrained_decoding_debug": False,
+    "allow_lm_batch": True,
+    "auto_score": False,
+    "auto_lrc": False,
+    "score_scale": 1.0,
+    "lm_batch_chunk_size": 8,
+    "track_name": "",
+    "complete_track_classes": "",
+    "enable_normalization": True,
+    "normalization_db": -1.0,
+    "fade_in_duration": 0.0,
+    "fade_out_duration": 0.0,
+    "latent_shift": 0.0,
+    "latent_rescale": 1.0,
+    "repaint_mode": "balanced",
+    "repaint_strength": 0.5,
+    "retake_variance": 0.0,
+    "retake_seed": None,
+    "flow_edit_morph": False,
+    "flow_edit_source_caption": "",
+    "flow_edit_source_lyrics": "",
+    "flow_edit_n_min": 0.0,
+    "flow_edit_n_max": 1.0,
+    "flow_edit_n_avg": 1,
+    "autogen_checkbox": False,
+    "current_batch_index": 0,
+    "total_batches": 1,
+    "batch_queue": [],
+    "generation_params_state": None,
+}
+
+# Aliases the song JSON may use -> the UI field name in INPUT_ORDER.
+SONG_ALIASES = {
+    "prompt": "captions",
+    "caption": "captions",
+    "keyscale": "key_scale",
+    "timesignature": "time_signature",
+    "duration": "audio_duration",
+    "batch_size": "batch_size_input",
+    "thinking": "think_checkbox",
+    "use_random_seed": "random_seed_checkbox",
+}
 
 
-def md(src):
-    cells.append({"cell_type": "markdown", "metadata": {}, "source": src})
+# ---------------------------------------------------------------------------
+# The notebook cell — orchestration only.
+# ---------------------------------------------------------------------------
+NOTEBOOK_CELL_TEMPLATE = r'''# =============================================================================
+# ACE-Step 2x T4 — single-cell headless generator (Gradio-API driven)
+#
+# Launches the SAME Gradio UI you already use successfully, then drives its
+# Generate button via gradio_client (no UI clicks, no in-process reimpl).
+# Per-song fields override Gradio defaults; everything else mirrors what the
+# UI sends when you click Generate.
+#
+# Prereqs:
+#   - Kaggle: Settings -> Accelerator = GPU T4 x2, Internet = ON
+#   - Optional Drive upload: add Kaggle Secret GDRIVE_SA_JSON (service account
+#     JSON). The target folder must live in a SHARED DRIVE (service accounts
+#     have no personal-Drive quota). Put the folder id in GDRIVE_FOLDER_ID
+#     below or expose it as the Kaggle secret GDRIVE_FOLDER_ID.
+# =============================================================================
+
+# ----- CONFIG (edit these) ---------------------------------------------------
+REPO_URL    = "https://github.com/hardik2015/ACE-Step-1.5.git"
+REPO_BRANCH = "main"
+WORK_DIR    = "/kaggle/tmp/ACE-Step-1.5"
+
+OUTPUT_MODE       = "local"                                # "local" | "gdrive"
+LOCAL_OUT         = "/kaggle/working/acestep_output"
+GDRIVE_FOLDER_ID  = ""                                     # Shared Drive folder id
+
+INPUT_MODE        = "inline"                               # "inline" | "file"
+INPUT_JSON_PATH   = "/kaggle/input/your-dataset/songs.json"
+
+SONG_JSON_INLINE = r"""
+{
+  "title":  "Tera Sheher",
+  "prompt": "modern Bollywood pop, romantic duet male and female vocals, lush strings, tabla and dholak groove, soft flute, cinematic and emotional, danceable mid-tempo",
+  "lyrics": "[verse]\nSham dhale teri yaadein chali aayi\nTere bina yeh duniya soti nahi\nEvery street feels like a song we used to know\n[chorus]\nTera sheher teri galiyan\nTere naam ki yeh raahein\nHold me close tonight\nRoshni ban ke aaja zindagi mein\n",
+  "vocal_language": "unknown"
+}
+"""
+
+# Defaults merged UNDER each song. Field names match the song-JSON API style.
+GEN_DEFAULTS = {
+    "thinking":          True,
+    "use_cot_caption":   False,    # KEY: keeps YOUR caption
+    "use_cot_language":  True,     # matches the working Gradio run
+    "use_cot_metas":     True,
+    "inference_steps":   50,
+    "guidance_scale":    7.0,
+    "use_random_seed":   True,
+    "audio_format":      "mp3",
+    "batch_size":        1,
+    # No "duration" => the LM picks (consistent codes/latents -> clean audio).
+}
+
+# The Gradio API endpoint name. The Generate button wires three handlers via
+# .click(...).then(...).then(...); the second one (the actual generator) is
+# what we want. The notebook prints view_api() so you can confirm the name.
+GRADIO_API_NAME = None        # e.g. "/lambda_1"; None => auto-detect by signature
+
+# Multi-GPU layout (matches the working ace-step.ipynb).
+STABILITY_ENV = {
+    "ACESTEP_DTYPE":               "float32",
+    "ACESTEP_LM_DEVICE":           "cuda:1",
+    "ACESTEP_LM_BACKEND":          "pt",
+    "NANOVLLM_DISABLE_CUDA_GRAPH": "1",
+    "ACE_DISABLE_CUDA_GRAPHS":     "1",
+    "VLLM_DISABLE_CUDA_GRAPH":     "1",
+    "VLLM_ENFORCE_EAGER":          "1",
+    "TORCHDYNAMO_DISABLE":         "1",
+    "TORCHAO_FORCE_FP32":          "1",
+    "PYTORCH_CUDA_ALLOC_CONF":     "expandable_segments:True",
+    "MPLBACKEND":                  "agg",
+    "CUDA_LAUNCH_BLOCKING":        "1",
+    "ACESTEP_GENERATION_TIMEOUT":  "1800",
+}
+
+GRADIO_PORT = 7860
+GRADIO_LOG  = "/kaggle/working/gradio.log"
+GRADIO_READY_TIMEOUT_S = 60 * 30           # first run downloads ~13GB weights
+
+# ----- HARD-CODED UI CONTRACT (from generation_run_wiring.py) ----------------
+INPUT_ORDER   = __INPUT_ORDER__
+UI_DEFAULTS   = __UI_DEFAULTS__
+SONG_ALIASES  = __SONG_ALIASES__
+
+# ----- IMPLEMENTATION --------------------------------------------------------
+import os, sys, json, time, shutil, subprocess, pathlib, datetime, shlex
+import urllib.request
 
 
-def code(src):
-    cells.append(
-        {
+def sh(cmd, cwd=None, check=True):
+    print(f"$ {cmd}")
+    r = subprocess.run(cmd, shell=True, cwd=cwd, env=os.environ.copy())
+    if check and r.returncode != 0:
+        raise RuntimeError(f"command failed (exit {r.returncode}): {cmd}")
+
+
+# 1) Apply env (matches the working ace-step.ipynb).
+for k, v in STABILITY_ENV.items():
+    os.environ[k] = v
+print("env:", " ".join(f"{k}={v}" for k, v in STABILITY_ENV.items()))
+
+# 2) Show GPUs.
+try:
+    print(subprocess.check_output(
+        "nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader",
+        shell=True, text=True))
+except Exception as exc:
+    print(f"(nvidia-smi unavailable: {exc})")
+
+# 3) Install uv if missing.
+if not shutil.which("uv"):
+    sh("curl -LsSf https://astral.sh/uv/install.sh | sh", check=False)
+os.environ["PATH"] = "/root/.local/bin:" + os.environ.get("PATH", "")
+
+# 4) Clone / update repo into /kaggle/tmp.
+os.makedirs(os.path.dirname(WORK_DIR), exist_ok=True)
+if not os.path.isdir(os.path.join(WORK_DIR, ".git")):
+    sh(f"git clone --depth 1 -b {REPO_BRANCH} {REPO_URL} {WORK_DIR}")
+else:
+    sh(f"git -C {WORK_DIR} fetch --depth 1 origin {REPO_BRANCH}", check=False)
+    sh(f"git -C {WORK_DIR} checkout {REPO_BRANCH}", check=False)
+    sh(f"git -C {WORK_DIR} reset --hard origin/{REPO_BRANCH}", check=False)
+
+# 5) Build the project's .venv with pinned torch.
+sh("uv sync", cwd=WORK_DIR, check=False)
+
+# 6) Install gradio_client in the Kaggle notebook process (we drive Gradio from
+#    here over HTTP -- no need to import acestep here).
+sh(f"{sys.executable} -m pip install -q 'gradio_client>=1.0.0'")
+from gradio_client import Client
+
+# 7) Launch Gradio in the background using the project .venv (same command as
+#    your working ace-step.ipynb, without ngrok).
+def _gradio_alive():
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{GRADIO_PORT}/config", timeout=5)
+        return True
+    except Exception:
+        return False
+
+if not _gradio_alive():
+    log_f = open(GRADIO_LOG, "w")
+    cmd = ["uv", "run", "acestep",
+           "--device", "cuda", "--backend", "pt",
+           "--lm_device", "cuda:1",
+           "--server-name", "127.0.0.1",
+           "--port", str(GRADIO_PORT)]
+    print("launching:", " ".join(cmd), f"(logs -> {GRADIO_LOG})")
+    proc = subprocess.Popen(cmd, cwd=WORK_DIR, env=os.environ.copy(),
+                            stdout=log_f, stderr=subprocess.STDOUT)
+    print(f"gradio pid={proc.pid}, waiting up to {GRADIO_READY_TIMEOUT_S}s for /config ...")
+    deadline = time.time() + GRADIO_READY_TIMEOUT_S
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            print("gradio exited early. Tail of log:")
+            with open(GRADIO_LOG) as f:
+                print("".join(f.readlines()[-50:]))
+            raise RuntimeError("gradio failed to start")
+        if _gradio_alive():
+            break
+        time.sleep(5)
+    else:
+        raise TimeoutError("gradio not ready in time")
+print(f"gradio ready on http://127.0.0.1:{GRADIO_PORT}")
+
+# 8) Connect with gradio_client and print the discovered endpoints.
+client = Client(f"http://127.0.0.1:{GRADIO_PORT}", verbose=False)
+api = client.view_api(return_format="dict")
+print("=== Gradio API endpoints (named_endpoints) ===")
+named = (api or {}).get("named_endpoints", {})
+for name, spec in named.items():
+    n_params = len(spec.get("parameters", []))
+    n_out = len(spec.get("returns", []))
+    print(f"  {name}: parameters={n_params}, returns={n_out}")
+
+def _autodetect_endpoint(api_dict, expected_params=78):
+    """Find the endpoint whose parameter count matches the Generate handler."""
+    candidates = []
+    for name, spec in (api_dict or {}).get("named_endpoints", {}).items():
+        n = len(spec.get("parameters", []))
+        n_out = len(spec.get("returns", []))
+        candidates.append((name, n, n_out))
+    # Prefer exact match on parameter count; then "closest above 50".
+    exact = [c for c in candidates if c[1] == expected_params]
+    if exact:
+        return exact[0][0]
+    candidates.sort(key=lambda c: (abs(c[1] - expected_params), -c[1]))
+    return candidates[0][0] if candidates else None
+
+target_endpoint = GRADIO_API_NAME or _autodetect_endpoint(api, expected_params=len(INPUT_ORDER))
+print(f"\nUsing endpoint: {target_endpoint}")
+
+# 9) Resolve song input.
+if INPUT_MODE == "file":
+    with open(INPUT_JSON_PATH) as f:
+        songs_data = json.load(f)
+else:
+    songs_data = json.loads(SONG_JSON_INLINE)
+if isinstance(songs_data, dict):
+    songs = songs_data["songs"] if isinstance(songs_data.get("songs"), list) else [songs_data]
+elif isinstance(songs_data, list):
+    songs = songs_data
+else:
+    raise ValueError("Song input must be a dict, a list, or {'songs':[...]}")
+print(f"songs: {len(songs)}")
+
+
+def _build_positional(song):
+    """Merge GEN_DEFAULTS + UI_DEFAULTS + song (per-field overrides) and
+    produce the positional list in INPUT_ORDER (matches the wiring)."""
+    merged = dict(UI_DEFAULTS)
+    # Apply GEN_DEFAULTS first (API-style names, mapped through SONG_ALIASES)
+    for k, v in GEN_DEFAULTS.items():
+        merged[SONG_ALIASES.get(k, k)] = v
+    # Then per-song overrides
+    for k, v in song.items():
+        if k in ("title",):
+            continue
+        merged[SONG_ALIASES.get(k, k)] = v
+    return [merged[name] for name in INPUT_ORDER]
+
+
+# 10) Run generation, one song at a time, on the same shared init.
+os.makedirs(LOCAL_OUT, exist_ok=True)
+manifest = []
+for i, song in enumerate(songs, 1):
+    title = (song.get("title") or song.get("prompt") or song.get("caption") or f"song{i}")[:80]
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    print(f"\n[gen {i}/{len(songs)}] {title!r}")
+    positional = _build_positional(song)
+    try:
+        result = client.predict(*positional, api_name=target_endpoint)
+    except Exception as exc:
+        # Gradio sometimes returns the chain index via fn_index instead;
+        # try a couple of fallbacks.
+        print(f"  predict via api_name failed: {exc}")
+        fallback_indices = [1, 2, 0]
+        result = None
+        for idx in fallback_indices:
+            try:
+                result = client.predict(*positional, fn_index=idx)
+                print(f"  fallback succeeded via fn_index={idx}")
+                break
+            except Exception as e2:
+                print(f"  fn_index={idx} failed: {e2}")
+        if result is None:
+            raise
+
+    # The first 8 outputs are generated_audio_1..8; with batch_size=1 only the
+    # first is populated. Each value is the local server file path.
+    audio_outputs = result[:8] if isinstance(result, (list, tuple)) else [result]
+    saved = []
+    for ai, ao in enumerate(audio_outputs, 1):
+        # Gradio_client commonly returns a dict like {"path": "...", "url": "..."}
+        path = ao if isinstance(ao, str) else (ao or {}).get("path") if isinstance(ao, dict) else None
+        if not path:
+            continue
+        if not os.path.exists(path):
+            print(f"  [{ai}] gradio reported path {path} but it doesn't exist")
+            continue
+        dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_{ai}{pathlib.Path(path).suffix}")
+        shutil.copy2(path, dst)
+        print(f"   -> {dst} ({os.path.getsize(dst)//1024} KB)")
+        saved.append(dst)
+    manifest.append({"index": i, "title": title, "paths": saved, "success": bool(saved)})
+
+# Manifest
+with open(os.path.join(LOCAL_OUT, "manifest.json"), "w", encoding="utf-8") as f:
+    json.dump(manifest, f, indent=2, ensure_ascii=False)
+print(f"\nmanifest -> {LOCAL_OUT}/manifest.json")
+
+# 11) Optional Google Drive upload (Shared Drive folder required for SA).
+if OUTPUT_MODE == "gdrive":
+    try:
+        from kaggle_secrets import UserSecretsClient
+        sa_json = UserSecretsClient().get_secret("GDRIVE_SA_JSON")
+    except Exception as exc:
+        raise RuntimeError(f"Need Kaggle Secret GDRIVE_SA_JSON for Drive upload: {exc}")
+    folder = GDRIVE_FOLDER_ID
+    if not folder:
+        try:
+            folder = UserSecretsClient().get_secret("GDRIVE_FOLDER_ID")
+        except Exception:
+            raise RuntimeError("Set GDRIVE_FOLDER_ID or a Kaggle Secret of the same name.")
+    try:
+        from googleapiclient.discovery import build
+        from google.oauth2 import service_account
+        from googleapiclient.http import MediaFileUpload
+    except ImportError:
+        sh(f"{sys.executable} -m pip install -q google-api-python-client google-auth")
+        from googleapiclient.discovery import build
+        from google.oauth2 import service_account
+        from googleapiclient.http import MediaFileUpload
+
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(sa_json), scopes=["https://www.googleapis.com/auth/drive"])
+    svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    AUDIO_EXTS = {".mp3", ".wav", ".flac", ".opus", ".aac"}
+    uploaded = 0
+    for p in pathlib.Path(LOCAL_OUT).rglob("*"):
+        if p.is_file() and (p.suffix.lower() in AUDIO_EXTS or p.name == "manifest.json"):
+            meta = {"name": p.name, "parents": [folder]}
+            res = svc.files().create(
+                body=meta,
+                media_body=MediaFileUpload(str(p), resumable=True),
+                fields="id, webViewLink", supportsAllDrives=True).execute()
+            link = res.get("webViewLink") or res.get("id")
+            print(f"[drive] {p.name} -> {link}")
+            uploaded += 1
+    print(f"[drive] {uploaded} file(s) uploaded.")
+else:
+    print(f"[local] outputs in {LOCAL_OUT}")
+'''
+
+
+def build_notebook(out_path: str) -> None:
+    cell_source = (
+        NOTEBOOK_CELL_TEMPLATE
+        .replace("__INPUT_ORDER__", repr(INPUT_ORDER))
+        .replace("__UI_DEFAULTS__", repr(UI_DEFAULTS))
+        .replace("__SONG_ALIASES__", repr(SONG_ALIASES))
+    )
+    nb = {
+        "cells": [{
             "cell_type": "code",
             "metadata": {},
             "execution_count": None,
             "outputs": [],
-            "source": src,
-        }
+            "source": cell_source,
+        }],
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python"},
+            "accelerator": "GPU",
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(nb, f, indent=1, ensure_ascii=False)
+    print(f"Wrote {out_path} (1 cell)")
+
+
+if __name__ == "__main__":
+    out = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "acestep_kaggle_2xT4_weekly.ipynb",
     )
-
-
-md(r"""# ACE-Step 1.5 — 2× T4 weekly generator (Kaggle)
-
-Runs **ACE-Step** headless on Kaggle's **GPU T4 ×2 (2×16GB)** with a split layout:
-
-* **GPU 0 (`cuda:0`)** — DiT (`acestep-v15-sft`) + VAE + text-encoder, no CPU offload.
-* **GPU 1 (`cuda:1`)** — the **4B 5Hz LM** (PyTorch backend).
-
-It takes a **song JSON** (a single song, a list, or `{"songs": [...]}`) — either pasted
-into a variable for testing or read from a file — generates audio, and writes the
-`.mp3` + `.json` result to a **local directory** or **Google Drive**.
-
-## Before you run
-1. **Settings → Accelerator → `GPU T4 x2`**.
-2. **Settings → Internet → On** (needed to clone the repo and download model weights).
-3. *(Google Drive output only)* add Kaggle **Secrets** (Add-ons → Secrets):
-   * `GDRIVE_SA_JSON` — a Google **service-account** JSON key (Drive API enabled).
-   * Share your target Drive folder with the service-account email (Editor), and put
-     the folder ID in `GDRIVE_FOLDER_ID` below (or as a secret of the same name).
-
-## Run weekly on a schedule
-Save Version → **Save & Run All (Commit)** → enable **Schedule**, pick **Weekly**.
-Scheduled runs are headless and must finish within 12h, so keep the song list small.
-Everything in this notebook runs top-to-bottom with no interactive input.
-""")
-
-md("## 1. Configuration — edit this cell")
-
-code(r'''# ----------------------------- Repo -----------------------------
-REPO_URL    = "https://github.com/hardik2015/ACE-Step-1.5.git"
-REPO_BRANCH = "main"
-WORKDIR     = "/kaggle/working/ACE-Step-1.5"
-
-# --------------------------- Output -----------------------------
-# "local"  -> save under LOCAL_OUTPUT_DIR (persisted in /kaggle/working)
-# "gdrive" -> upload to a Google Drive folder via a service account (see header)
-OUTPUT_MODE       = "local"
-LOCAL_OUTPUT_DIR  = "/kaggle/working/acestep_output"
-GDRIVE_FOLDER_ID  = ""          # Drive folder ID (or set a Kaggle secret of this name)
-
-# ---------------------------- Input ----------------------------
-# "inline" -> use SONG_JSON_INLINE below (handy for testing)
-# "file"   -> read INPUT_JSON_PATH (e.g. a file from an attached Kaggle dataset)
-INPUT_MODE      = "inline"
-INPUT_JSON_PATH = "/kaggle/input/your-dataset/songs.json"
-
-# Paste one song, a list of songs, or {"songs": [ ... ]}.
-# Any field accepted by POST /release_task works; unspecified fields fall back to
-# GEN_DEFAULTS below. See the project's docs/en/API.md for the full schema.
-SONG_JSON_INLINE = r"""
-{
-  "prompt": "warm indie pop, female vocal, gentle piano, soft drums",
-  "lyrics": "[verse]\nMorning light across the room\n[chorus]\nAnd we rise, and we rise\n",
-  "audio_duration": 120,
-  "bpm": 96,
-  "key_scale": "C major",
-  "vocal_language": "en"
-}
-"""
-
-# Defaults merged UNDER each song (the song's own fields win).
-GEN_DEFAULTS = {
-    "thinking": True,          # use the 5Hz LM (runs on GPU1) — higher quality
-    "batch_size": 1,           # keep modest: DiT runs on a real 16GB GPU0
-    "audio_format": "mp3",     # mp3 | wav | flac | opus | aac | wav32
-    "vocal_language": "en",
-    "inference_steps": 50,     # sft/base model: ~32-64. For a turbo model use 8.
-    "guidance_scale": 7.0,     # effective for base/sft models
-    "use_random_seed": True,
-}
-
-# --------------------- Device / model layout --------------------
-# These drive the 2x T4 split. Treating the box as "24GB class" (MAX_CUDA_VRAM=24)
-# is what lets the tiering logic enable the 4B LM and disable CPU offload; the LM
-# physically lives on GPU1, and GPU0's real 16GB comfortably holds DiT+VAE+enc at
-# the small batch size above.
-ENV = {
-    "ACESTEP_CONFIG_PATH":       "acestep-v15-sft",
-    "ACESTEP_LM_MODEL_PATH":     "acestep-5Hz-lm-4B",
-    "ACESTEP_DEVICE":            "cuda",      # DiT/VAE/text-encoder -> GPU0
-    "ACESTEP_LM_DEVICE":         "cuda:1",    # 5Hz LM             -> GPU1
-    "ACESTEP_LM_BACKEND":        "pt",        # cuda:1 forces the PyTorch backend anyway
-    "ACESTEP_INIT_LLM":          "true",
-    "ACESTEP_OFFLOAD_TO_CPU":    "false",
-    "ACESTEP_OFFLOAD_DIT_TO_CPU":"false",
-    "ACESTEP_NO_INIT":           "false",     # eager-load models at server startup
-    "MAX_CUDA_VRAM":             "24",        # tier6b: 4B allowed + no offload
-    "ACESTEP_DTYPE":             "float32",   # T4 (Turing) has no bf16; fp16 overflows
-                                              # to NaN latents — force fp32 for the DiT.
-}
-
-# --------------------------- Server ----------------------------
-API_HOST = "127.0.0.1"
-API_PORT = 8001
-
-# How long to wait for the server to come up (model download + load), and for a
-# single generation task to finish.
-SERVER_READY_TIMEOUT_S = 60 * 40    # first run downloads several GB of weights
-POLL_TIMEOUT_S         = 60 * 30
-print("Config loaded.")
-''')
-
-md("## 2. Apply environment + show the two GPUs")
-
-code(r'''import os, subprocess
-
-for k, v in ENV.items():
-    os.environ[k] = v
-
-print("Environment overrides:")
-for k in ENV:
-    print(f"  {k} = {os.environ[k]}")
-
-print("\nGPUs visible to this notebook:")
-print(subprocess.run(
-    ["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader"],
-    capture_output=True, text=True).stdout or "(nvidia-smi unavailable)")
-''')
-
-md("## 3. Clone the repo")
-
-code(r'''import os, subprocess
-
-def run(cmd, **kw):
-    print("$", " ".join(cmd))
-    r = subprocess.run(cmd, text=True, **kw)
-    if r.returncode != 0:
-        raise RuntimeError(f"command failed ({r.returncode}): {' '.join(cmd)}")
-
-if not os.path.isdir(os.path.join(WORKDIR, ".git")):
-    run(["git", "clone", "--branch", REPO_BRANCH, "--depth", "1", REPO_URL, WORKDIR])
-else:
-    run(["git", "-C", WORKDIR, "fetch", "--depth", "1", "origin", REPO_BRANCH])
-    run(["git", "-C", WORKDIR, "checkout", REPO_BRANCH])
-    run(["git", "-C", WORKDIR, "reset", "--hard", f"origin/{REPO_BRANCH}"])
-
-os.chdir(WORKDIR)
-print("Repo ready at", WORKDIR)
-''')
-
-md(r"""## 4. Install dependencies
-
-This keeps **Kaggle's preinstalled PyTorch** (matched to the T4 driver) and installs
-ACE-Step with `--no-deps`, then layers the non-torch runtime libraries on top. The
-first run takes several minutes. If a generation step later complains about a missing
-module, add it to `EXTRA_DEPS` and re-run this cell.
-""")
-
-code(r'''import sys, subprocess
-
-def pip(*args):
-    print("$ pip", " ".join(args))
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *args])
-
-import torch
-print("Torch:", torch.__version__, "| CUDA:", torch.version.cuda,
-      "| GPUs:", torch.cuda.device_count())
-
-# 1) Register the `acestep` / `acestep-api` entry points without disturbing torch.
-pip("-e", ".", "--no-deps")
-
-# 2) Runtime libraries the API + PyTorch-backend LM path need (no torch here).
-EXTRA_DEPS = [
-    "transformers>=4.51.0,<4.58.0", "diffusers>=0.37.0", "accelerate>=1.12.0",
-    "fastapi>=0.110.0", "uvicorn[standard]>=0.27.0", "loguru>=0.7.3",
-    "einops>=0.8.1", "soundfile>=0.13.1", "scipy>=1.10.1", "diskcache",
-    "vector-quantize-pytorch>=1.27.15", "numba>=0.63.1", "toml",
-    "pytorch-wavelets>=1.3.0", "pywavelets>=1.9.0", "modelscope",
-    "typer-slim>=0.21.1", "peft>=0.18.0", "huggingface_hub",
-]
-pip(*EXTRA_DEPS)
-
-# 3) Best-effort extras (match the resident torch; harmless if they fail).
-for spec in ["torchao", "torchcodec"]:
-    try:
-        pip(spec)
-    except Exception as e:
-        print(f"[warn] could not install {spec}: {e}")
-
-# 4) Vendored nano-vllm — only used by the vllm backend, installed for safe imports.
-try:
-    pip("-e", "acestep/third_parts/nano-vllm", "--no-deps")
-except Exception as e:
-    print(f"[warn] nano-vllm install skipped: {e}")
-
-print("Dependency install step finished.")
-''')
-
-md(r"""## 5. Launch the API server (background) and wait until ready
-
-`ACESTEP_NO_INIT=false` makes the server download + load all weights before it starts
-serving, so once `/health` answers, generation is ready. Logs stream to
-`/kaggle/working/acestep_api.log`.
-""")
-
-code(r'''import subprocess, time, os, requests, pathlib
-
-API = f"http://{API_HOST}:{API_PORT}"
-LOG_PATH = "/kaggle/working/acestep_api.log"
-
-# Reuse an already-running server if this cell is re-run.
-def _alive():
-    try:
-        return requests.get(f"{API}/health", timeout=5).status_code == 200
-    except Exception:
-        return False
-
-if _alive():
-    print("Server already running.")
-else:
-    log = open(LOG_PATH, "w")
-    proc = subprocess.Popen(
-        ["acestep-api", "--host", API_HOST, "--port", str(API_PORT)],
-        stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy(), cwd=WORKDIR,
-    )
-    print(f"Launched acestep-api (pid {proc.pid}); waiting for /health ...")
-    deadline = time.time() + SERVER_READY_TIMEOUT_S
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            print("Server process exited early. Last log lines:")
-            print("".join(pathlib.Path(LOG_PATH).read_text().splitlines(keepends=True)[-40:]))
-            raise RuntimeError("acestep-api failed to start")
-        if _alive():
-            ready = True
-            break
-        time.sleep(5)
-    if not ready:
-        raise TimeoutError("Server did not become ready in time; check the log.")
-
-h = requests.get(f"{API}/health", timeout=10).json()["data"]
-print("Health:", h)
-print(f"  models_initialized={h.get('models_initialized')} "
-      f"loaded_model={h.get('loaded_model')} "
-      f"llm_initialized={h.get('llm_initialized')} "
-      f"loaded_lm_model={h.get('loaded_lm_model')}")
-''')
-
-md("## 6. Helpers — load input, submit, poll, save (local or Google Drive)")
-
-code(r'''import json, os, time, datetime, requests
-
-API = f"http://{API_HOST}:{API_PORT}"
-
-def load_songs():
-    if INPUT_MODE == "file":
-        with open(INPUT_JSON_PATH) as f:
-            data = json.load(f)
-    else:
-        data = json.loads(SONG_JSON_INLINE)
-    if isinstance(data, dict):
-        if isinstance(data.get("songs"), list):
-            return data["songs"]
-        return [data]
-    if isinstance(data, list):
-        return data
-    raise ValueError("Input JSON must be an object, a list, or {'songs': [...]}.")
-
-def submit(song):
-    payload = {**GEN_DEFAULTS, **song}
-    r = requests.post(f"{API}/release_task", json=payload, timeout=120)
-    r.raise_for_status()
-    return r.json()["data"]["task_id"], payload
-
-def poll(task_id, timeout=POLL_TIMEOUT_S, interval=5):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        r = requests.post(f"{API}/query_result",
-                          json={"task_id_list": [task_id]}, timeout=60)
-        r.raise_for_status()
-        items = r.json().get("data") or []
-        if items:
-            it = items[0]
-            status = it.get("status")
-            if status == 1:
-                res = it.get("result")
-                return json.loads(res) if isinstance(res, str) else res
-            if status == 2:
-                raise RuntimeError(f"Task {task_id} failed: {it}")
-        time.sleep(interval)
-    raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
-
-def download(file_url):
-    r = requests.get(f"{API}{file_url}", timeout=600)
-    r.raise_for_status()
-    return r.content
-
-_EXT = {"wav32": "wav"}
-def _ext(fmt):
-    return _EXT.get(fmt, fmt or "mp3")
-
-# ---- Google Drive (service account; headless-safe) ----
-_drive = None
-def _get_drive():
-    global _drive
-    if _drive is not None:
-        return _drive
-    sa_json = None
-    try:
-        from kaggle_secrets import UserSecretsClient
-        sa_json = UserSecretsClient().get_secret("GDRIVE_SA_JSON")
-    except Exception as e:
-        raise RuntimeError(f"Could not read GDRIVE_SA_JSON secret: {e}")
-    try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-    except Exception:
-        import sys, subprocess
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                        "google-api-python-client", "google-auth"])
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(sa_json), scopes=["https://www.googleapis.com/auth/drive"])
-    _drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    return _drive
-
-def _gdrive_folder_id():
-    if GDRIVE_FOLDER_ID:
-        return GDRIVE_FOLDER_ID
-    try:
-        from kaggle_secrets import UserSecretsClient
-        return UserSecretsClient().get_secret("GDRIVE_FOLDER_ID")
-    except Exception:
-        raise RuntimeError("Set GDRIVE_FOLDER_ID (variable or Kaggle secret).")
-
-def _gdrive_upload(local_path, name):
-    from googleapiclient.http import MediaFileUpload
-    svc = _get_drive()
-    meta = {"name": name, "parents": [_gdrive_folder_id()]}
-    media = MediaFileUpload(local_path, resumable=True)
-    f = svc.files().create(body=meta, media_body=media, fields="id, webViewLink",
-                           supportsAllDrives=True).execute()
-    return f.get("webViewLink") or f.get("id")
-
-def save_output(stamp, task_id, idx, audio_bytes, item, fmt):
-    """Write audio+json locally, then mirror to Drive if OUTPUT_MODE == 'gdrive'."""
-    os.makedirs(LOCAL_OUTPUT_DIR, exist_ok=True)
-    base = f"{stamp}_{task_id[:8]}_{idx}"
-    apath = os.path.join(LOCAL_OUTPUT_DIR, f"{base}.{_ext(fmt)}")
-    jpath = os.path.join(LOCAL_OUTPUT_DIR, f"{base}.json")
-    with open(apath, "wb") as f:
-        f.write(audio_bytes)
-    with open(jpath, "w") as f:
-        json.dump(item, f, indent=2, ensure_ascii=False)
-    dest = apath
-    if OUTPUT_MODE == "gdrive":
-        link = _gdrive_upload(apath, os.path.basename(apath))
-        _gdrive_upload(jpath, os.path.basename(jpath))
-        dest = link
-    return apath, dest
-
-print("Helpers ready.")
-''')
-
-md("## 7. Generate")
-
-code(r'''import datetime, json
-
-songs = load_songs()
-print(f"Loaded {len(songs)} song(s). Output mode: {OUTPUT_MODE}\n")
-
-manifest = []
-for si, song in enumerate(songs, 1):
-    title = (song.get("prompt") or song.get("sample_query") or "song")[:60]
-    print(f"[{si}/{len(songs)}] submitting: {title!r}")
-    task_id, payload = submit(song)
-    print(f"    task_id={task_id} — waiting...")
-    results = poll(task_id)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    fmt = payload.get("audio_format", "mp3")
-    for ai, item in enumerate(results, 1):
-        file_url = item.get("file")
-        if not file_url:
-            print(f"    [{ai}] no file in result, skipping")
-            continue
-        audio = download(file_url)
-        local_path, dest = save_output(stamp, task_id, ai, audio, item, fmt)
-        size_kb = len(audio) // 1024
-        print(f"    [{ai}] saved {size_kb} KB -> {dest}")
-        manifest.append({"song_index": si, "task_id": task_id,
-                         "local_path": local_path, "destination": dest,
-                         "bytes": len(audio)})
-
-print("\nDone. Manifest:")
-print(json.dumps(manifest, indent=2))
-
-with open("/kaggle/working/manifest.json", "w") as f:
-    json.dump(manifest, f, indent=2)
-print("\nManifest written to /kaggle/working/manifest.json")
-''')
-
-md(r"""## Notes & troubleshooting
-
-* **The 4B LM downgrade:** the API server normally downgrades the 4B LM to 1.7B on a
-  16GB GPU. `MAX_CUDA_VRAM=24` (set in cell 1) makes the tiering treat the machine as
-  24GB-class so the 4B is kept and CPU offload is disabled — valid here because the LM
-  actually lives on the second GPU. Keep `batch_size` small so GPU0's real 16GB isn't
-  exceeded.
-* **T4 has no bf16 tensor cores** (Turing). The code runs bf16, which works but isn't
-  as fast as fp16 — expect a few minutes per song with the 4B LM + `thinking=true`.
-* **Turbo model instead of sft:** set `ACESTEP_CONFIG_PATH=acestep-v15-turbo` and drop
-  `inference_steps` to 8 in `GEN_DEFAULTS`.
-* **Avoid re-downloading weights every week:** attach the checkpoints as a Kaggle
-  dataset and point `ACESTEP_CHECKPOINTS_DIR` at the mounted path in `ENV`.
-* **Server log:** `/kaggle/working/acestep_api.log`.
-""")
-
-nb = {
-    "cells": cells,
-    "metadata": {
-        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
-        "language_info": {"name": "python"},
-        "accelerator": "GPU",
-    },
-    "nbformat": 4,
-    "nbformat_minor": 5,
-}
-
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   "acestep_kaggle_2xT4_weekly.ipynb")
-with open(out, "w", encoding="utf-8") as f:
-    json.dump(nb, f, indent=1, ensure_ascii=False)
-print("Wrote", out, "with", len(cells), "cells")
+    build_notebook(out)
