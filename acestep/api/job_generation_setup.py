@@ -198,6 +198,14 @@ def build_generation_setup(
         use_cot_caption=use_cot_caption,
         use_cot_language=use_cot_language,
         use_constrained_decoding=True,
+        # DCW correction strength is tuned per Think state. The Gradio path applies
+        # this via get_dcw_defaults_for_think(); the HTTP path otherwise inherits the
+        # non-Think GenerationParams defaults (scaler=0.05/high=0.02) even when
+        # thinking=True, which over-corrects and yields garbled/distorted audio.
+        # Values mirror acestep/ui/gradio/events/dcw_defaults.py (kept inline to
+        # avoid importing the gradio package into the headless API server).
+        dcw_scaler=0.02 if thinking else 0.05,
+        dcw_high_scaler=0.06 if thinking else 0.02,
     )
 
     batch_size = req.batch_size if req.batch_size is not None else 2

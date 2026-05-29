@@ -262,6 +262,41 @@ class JobGenerationSetupTests(unittest.TestCase):
         # so LM can fill missing bpm/key/time_signature
         self.assertTrue(setup.params.use_cot_metas)
 
+    def test_dcw_scalers_follow_think_state(self) -> None:
+        """DCW strengths must match the Gradio Think-aware defaults so the HTTP
+        path does not over-correct latents in Think mode (garbled audio).
+
+        Mirrors acestep/ui/gradio/events/dcw_defaults.py:
+          think -> scaler=0.02, high_scaler=0.06
+          non-think -> scaler=0.05, high_scaler=0.02
+        """
+
+        expected = {True: (0.02, 0.06), False: (0.05, 0.02)}
+        for thinking, (scaler, high_scaler) in expected.items():
+            with self.subTest(thinking=thinking):
+                setup = build_generation_setup(
+                    req=_base_req(),
+                    caption="cap",
+                    lyrics="lyr",
+                    bpm=None,
+                    key_scale="",
+                    time_signature="",
+                    audio_duration=None,
+                    thinking=thinking,
+                    sample_mode=False,
+                    format_has_duration=False,
+                    use_cot_caption=True,
+                    use_cot_language=True,
+                    lm_top_k=0,
+                    lm_top_p=0.9,
+                    parse_timesteps=lambda _value: None,
+                    is_instrumental=lambda _lyrics: False,
+                    default_dit_instruction="default instruction",
+                    task_instructions={},
+                )
+                self.assertAlmostEqual(scaler, setup.params.dcw_scaler)
+                self.assertAlmostEqual(high_scaler, setup.params.dcw_high_scaler)
+
 
 if __name__ == "__main__":
     unittest.main()
