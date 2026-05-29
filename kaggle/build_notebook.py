@@ -82,9 +82,19 @@ GEN_DEFAULTS = {
 # Multi-GPU layout (matches the working ace-step.ipynb).
 # ACESTEP_CONFIG_PATH selects the primary DiT model loaded at startup; we point
 # it at the SFT checkpoint so requests routed to "acestep-v15-sft" hit it.
+#
+# MAX_CUDA_VRAM: the GPU "tier" gate (acestep/gpu_config.py) sees ONE T4's
+# 14.6GB -> tier5, which forbids the 4B LM and falls back to acestep-5Hz-lm-1.7B
+# -- a model that is NOT in SUBMODEL_REGISTRY and not in the unified weights
+# bundle, so init hard-fails ("5Hz LM model not found"). The 4B IS bundled and
+# the LM gets its OWN dedicated T4 (cuda:1), so it fits fine; the gate is just
+# wrongly assuming DiT+LM share one GPU. Reporting 24GB promotes the gate to
+# tier6b, which permits the 4B we already have on disk. DiT (cuda:0) behavior is
+# unchanged: it loads float32/persistent regardless of tier.
 STABILITY_ENV = {
     "ACESTEP_CONFIG_PATH":         "acestep-v15-sft",
     "ACESTEP_DTYPE":               "float32",
+    "MAX_CUDA_VRAM":               "24",       # unlock the bundled 4B LM (see note above)
     "ACESTEP_LM_DEVICE":           "cuda:1",
     "ACESTEP_LM_BACKEND":          "pt",
     "NANOVLLM_DISABLE_CUDA_GRAPH": "1",
@@ -111,8 +121,18 @@ JOB_TIMEOUT_S       = 60 * 60           # per-song wall clock budget
 
 # ----- IMPLEMENTATION --------------------------------------------------------
 import os, sys, json, time, shutil, subprocess, pathlib, datetime
+import http.client
 import urllib.request
 import urllib.parse
+import urllib.error
+
+# Transient HTTP failures we tolerate while polling /query_result. The server
+# runs generation in a thread pool, but the worker thread holds the GIL almost
+# solidly while loading weights / driving the LM token loop, which starves
+# uvicorn's event loop -> polls time out even though the job is healthy.
+# urllib.error.URLError and socket timeouts are OSError subclasses; http.client
+# raises HTTPException (e.g. RemoteDisconnected/BadStatusLine) on a dropped conn.
+TRANSIENT_HTTP_ERRORS = (OSError, http.client.HTTPException)
 
 
 def sh(cmd, cwd=None, check=True):
@@ -165,7 +185,7 @@ if not _api_alive():
     cmd = ["uv", "run", "acestep-api",
            "--host", API_HOST,
            "--port", str(API_PORT),
-           "--lm-model-path", "acestep-5Hz-lm-0.6B"]
+           "--lm-model-path", "acestep-5Hz-lm-4B"]
     print("launching:", " ".join(cmd), f"(logs -> {API_LOG})")
     proc = subprocess.Popen(cmd, cwd=WORK_DIR, env=os.environ.copy(),
                             stdout=log_f, stderr=subprocess.STDOUT)
@@ -186,7 +206,7 @@ print(f"acestep-api ready on {API_BASE}")
 
 
 # 7) HTTP helpers (no extra dependencies; uses urllib).
-def _api_post(path, body):
+def _api_post(path, body, timeout=60):
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         f"{API_BASE}{path}",
@@ -194,16 +214,26 @@ def _api_post(path, body):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
-def _api_download(server_path, dest_path):
-    """Pull audio bytes via /v1/audio (server path-scoped to temp dir)."""
-    qs = urllib.parse.urlencode({"path": server_path})
-    with urllib.request.urlopen(f"{API_BASE}/v1/audio?{qs}", timeout=120) as r, \
-         open(dest_path, "wb") as out:
-        shutil.copyfileobj(r, out)
+def _print_api_log_tail(n=160):
+    """Dump the tail of the acestep-api log so the REAL failure traceback shows.
+
+    /query_result only echoes status/progress/stage from the progress cache and
+    drops the server-side error string, so on failure the log file is the only
+    place the actual exception is recorded.
+    """
+    try:
+        with open(API_LOG, "r", errors="replace") as f:
+            lines = f.readlines()
+        shown = lines[-n:]
+        print(f"---- {API_LOG} (last {len(shown)} of {len(lines)} lines) ----")
+        print("".join(shown).rstrip())
+        print("---- end of acestep-api log ----")
+    except Exception as exc:
+        print(f"(could not read {API_LOG}: {exc})")
 
 
 # 8) Resolve song input.
@@ -246,8 +276,19 @@ def _wait_for_job(task_id, deadline):
     """Poll /query_result until the job leaves status 0. Returns the parsed
     result list (a list of dicts with 'file', 'metas', etc.)."""
     last_progress = ""
+    transient = 0
     while time.time() < deadline:
-        resp = _api_post("/query_result", {"task_id_list": [task_id]})
+        try:
+            # Generous read timeout: the event loop can stall for a while during
+            # weight loading / LM decoding. A timeout here is NOT job failure.
+            resp = _api_post("/query_result", {"task_id_list": [task_id]}, timeout=120)
+        except TRANSIENT_HTTP_ERRORS as exc:
+            transient += 1
+            print(f"    .. poll retry #{transient} ({type(exc).__name__}: {exc}); "
+                  f"server busy, {int(deadline - time.time())}s budget left")
+            time.sleep(JOB_POLL_INTERVAL_S)
+            continue
+        transient = 0
         items = (resp or {}).get("data") or []
         if not items:
             time.sleep(JOB_POLL_INTERVAL_S)
@@ -264,7 +305,24 @@ def _wait_for_job(task_id, deadline):
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"could not parse result JSON: {exc}") from exc
         if status == 2:
-            raise RuntimeError(f"job {task_id} failed: {item.get('result')}")
+            # The cache-derived result payload drops the server error string,
+            # so surface the last log line + the full server log tail.
+            progress_text = item.get("progress_text") or ""
+            inner_err = ""
+            try:
+                rd = json.loads(item.get("result") or "[]")
+                if isinstance(rd, list) and rd and isinstance(rd[0], dict):
+                    inner_err = rd[0].get("error") or ""
+            except Exception:
+                pass
+            if progress_text:
+                print(f"    !! last log: {progress_text}")
+            if inner_err:
+                print(f"    !! error: {inner_err}")
+            _print_api_log_tail()
+            raise RuntimeError(
+                f"job {task_id} failed (real cause in the acestep-api log above)"
+            )
         time.sleep(JOB_POLL_INTERVAL_S)
     raise TimeoutError(f"job {task_id} did not finish within {JOB_TIMEOUT_S}s")
 
@@ -290,16 +348,25 @@ for i, song in enumerate(songs, 1):
 
     saved = []
     for ai, item in enumerate(results, 1):
-        server_path = item.get("file") or ""
-        if not server_path:
+        file_ref = item.get("file") or ""
+        if not file_ref:
             continue
-        ext = pathlib.Path(server_path).suffix or f".{GEN_DEFAULTS['audio_format']}"
+        # The server returns `file` as a ready-made URL, NOT a raw path:
+        #   "/v1/audio?path=<urlencoded filesystem path>"
+        # Recover the real path so we can copy it directly (the API server shares
+        # this container). Only if that fails do we fetch the URL as-is -- we must
+        # NOT pass file_ref back through /v1/audio?path=, because re-wrapping
+        # double-encodes the path and the server rejects it with 403.
+        parsed = urllib.parse.urlparse(file_ref)
+        local_path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0]
+        ext = pathlib.Path(local_path or file_ref).suffix or f".{GEN_DEFAULTS['audio_format']}"
         dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_{ai}{ext}")
-        if os.path.exists(server_path):
-            # API server runs in the same container, so the file is reachable.
-            shutil.copy2(server_path, dst)
+        if local_path and os.path.exists(local_path):
+            shutil.copy2(local_path, dst)            # same container: just copy
         else:
-            _api_download(server_path, dst)
+            url = file_ref if parsed.scheme else f"{API_BASE}{file_ref}"
+            with urllib.request.urlopen(url, timeout=120) as r, open(dst, "wb") as out:
+                shutil.copyfileobj(r, out)
         print(f"   -> {dst} ({os.path.getsize(dst)//1024} KB)")
         saved.append(dst)
     manifest.append({
