@@ -297,6 +297,56 @@ class JobGenerationSetupTests(unittest.TestCase):
                 self.assertAlmostEqual(scaler, setup.params.dcw_scaler)
                 self.assertAlmostEqual(high_scaler, setup.params.dcw_high_scaler)
 
+    def test_dcw_enabled_gated_by_model_type(self) -> None:
+        """DCW must run only for turbo models, matching the Gradio model-type
+        gate (get_ui_control_config): turbo -> DCW on, SFT/base -> DCW off.
+
+        The HTTP path must not inherit the GenerationParams dcw_enabled=True
+        default: running the wavelet correction on an SFT model over-processes
+        the latents into garbled/distorted audio.
+        """
+
+        def _build(*, selected_model_name: str = "", req_model: str | None = None):
+            req = _base_req()
+            if req_model is not None:
+                req.model = req_model
+            return build_generation_setup(
+                req=req,
+                caption="cap",
+                lyrics="lyr",
+                bpm=None,
+                key_scale="",
+                time_signature="",
+                audio_duration=None,
+                thinking=True,
+                sample_mode=False,
+                format_has_duration=False,
+                use_cot_caption=True,
+                use_cot_language=True,
+                lm_top_k=0,
+                lm_top_p=0.9,
+                parse_timesteps=lambda _value: None,
+                is_instrumental=lambda _lyrics: False,
+                default_dit_instruction="default instruction",
+                task_instructions={},
+                selected_model_name=selected_model_name,
+            )
+
+        # Turbo models enable DCW.
+        self.assertTrue(_build(selected_model_name="acestep-v15-turbo").params.dcw_enabled)
+        self.assertTrue(_build(selected_model_name="acestep-v15-xl-turbo").params.dcw_enabled)
+
+        # SFT / base models disable DCW (the garbled-SFT-audio bug).
+        self.assertFalse(_build(selected_model_name="acestep-v15-sft").params.dcw_enabled)
+        self.assertFalse(_build(selected_model_name="acestep-v15-base").params.dcw_enabled)
+
+        # The resolved label wins; otherwise fall back to req.model.
+        self.assertTrue(_build(req_model="acestep-v15-turbo").params.dcw_enabled)
+        self.assertFalse(_build(req_model="acestep-v15-sft").params.dcw_enabled)
+        self.assertFalse(
+            _build(selected_model_name="acestep-v15-sft", req_model="acestep-v15-turbo").params.dcw_enabled
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
