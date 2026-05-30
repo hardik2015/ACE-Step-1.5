@@ -89,12 +89,19 @@ GEN_DEFAULTS = {
 # bundle, so init hard-fails ("5Hz LM model not found"). The 4B IS bundled and
 # the LM gets its OWN dedicated T4 (cuda:1), so it fits fine; the gate is just
 # wrongly assuming DiT+LM share one GPU. Reporting 24GB promotes the gate to
-# tier6b, which permits the 4B we already have on disk. DiT (cuda:0) behavior is
-# unchanged: it loads float32/persistent regardless of tier.
+# tier6b, which permits the 4B we already have on disk. The DiT still loads
+# float32/persistent on cuda:0, BUT tier6b also flips offload_to_cpu_default to
+# False -- the auto-offload gate (startup_model_init.py) keys off this SAME
+# simulated VRAM (auto_offload = vram < 20), so 24 silently disables the
+# VAE/text-encoder CPU offload the real 14.6GB card needs. We pin
+# ACESTEP_OFFLOAD_TO_CPU=true to restore the tier5 offload (the explicit env
+# override wins over the tier default); without it cuda:0 OOMs once batch size
+# or duration grows.
 STABILITY_ENV = {
     "ACESTEP_CONFIG_PATH":         "acestep-v15-sft",
     "ACESTEP_DTYPE":               "float32",
     "MAX_CUDA_VRAM":               "24",       # unlock the bundled 4B LM (see note above)
+    "ACESTEP_OFFLOAD_TO_CPU":      "true",     # restore VAE/TextEnc offload the 24GB lie disables
     "ACESTEP_LM_DEVICE":           "cuda:1",
     "ACESTEP_LM_BACKEND":          "pt",
     "NANOVLLM_DISABLE_CUDA_GRAPH": "1",
