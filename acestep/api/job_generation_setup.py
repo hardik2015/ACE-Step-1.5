@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -20,6 +21,22 @@ class GenerationSetup:
 
     params: GenerationParams
     config: GenerationConfig
+
+
+def _is_turbo_model(model_name: str) -> bool:
+    """Return ``True`` when *model_name* is a turbo DiT variant.
+
+    DCW (Differential Correction in Wavelet domain) is enabled per model type.
+    This mirrors the Gradio model-type gate (``is_turbo`` in
+    ``acestep/ui/gradio/events/generation/generation_handlers.py`` /
+    ``get_ui_control_config``): turbo models run DCW, while SFT/base models run
+    with it OFF. The token-boundary match is kept inline so the headless API
+    server does not import the gradio package.
+    """
+    return (
+        re.search(r"(^|[\\/._-])turbo($|[\\/._-])", (model_name or "").lower())
+        is not None
+    )
 
 
 def _resolve_instruction(
@@ -117,6 +134,7 @@ def build_generation_setup(
     is_instrumental: Callable[[str], bool],
     default_dit_instruction: str,
     task_instructions: dict[str, str],
+    selected_model_name: str = "",
 ) -> GenerationSetup:
     """Build GenerationParams and GenerationConfig from request and prepared LLM inputs.
 
@@ -139,6 +157,9 @@ def build_generation_setup(
         is_instrumental: Instrumental detection callback.
         default_dit_instruction: Default instruction constant.
         task_instructions: Task instruction mapping.
+        selected_model_name: Resolved DiT model label, used to gate DCW on by
+            model type (turbo only) to match the Gradio path. Falls back to
+            ``req.model`` when empty.
 
     Returns:
         GenerationSetup: Prepared params/config pair for `generate_music`.
@@ -150,6 +171,11 @@ def build_generation_setup(
         default_dit_instruction=default_dit_instruction,
         task_instructions=task_instructions,
     )
+
+    # DCW runs only for turbo models, matching the Gradio model-type gate. For
+    # SFT/base models it must stay OFF; the resolved model label wins, falling
+    # back to the requested model.
+    dcw_enabled = _is_turbo_model(selected_model_name or (getattr(req, "model", "") or ""))
 
     params = GenerationParams(
         task_type=req.task_type,
@@ -198,12 +224,14 @@ def build_generation_setup(
         use_cot_caption=use_cot_caption,
         use_cot_language=use_cot_language,
         use_constrained_decoding=True,
-        # DCW correction strength is tuned per Think state. The Gradio path applies
-        # this via get_dcw_defaults_for_think(); the HTTP path otherwise inherits the
-        # non-Think GenerationParams defaults (scaler=0.05/high=0.02) even when
-        # thinking=True, which over-corrects and yields garbled/distorted audio.
-        # Values mirror acestep/ui/gradio/events/dcw_defaults.py (kept inline to
-        # avoid importing the gradio package into the headless API server).
+        # DCW is gated by model type (see _is_turbo_model). The headless API path
+        # otherwise inherits the GenerationParams default dcw_enabled=True and runs
+        # the wavelet correction across every SFT sampler step -- which the Gradio
+        # path disables for SFT/base models -- over-processing the latents into
+        # garbled/distorted audio. The scalers follow the Gradio Think-aware
+        # defaults (acestep/ui/gradio/events/dcw_defaults.py, kept inline to avoid
+        # importing gradio) and only take effect when DCW is enabled (turbo).
+        dcw_enabled=dcw_enabled,
         dcw_scaler=0.02 if thinking else 0.05,
         dcw_high_scaler=0.06 if thinking else 0.02,
     )
