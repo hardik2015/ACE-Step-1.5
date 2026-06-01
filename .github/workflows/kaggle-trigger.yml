@@ -1,0 +1,63 @@
+name: Kaggle trigger
+
+# Fires when the daily Claude routine commits new lyrics. Pushes the kernel to
+# Kaggle, which both creates a new version AND runs it -> that run is the trigger.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "kaggle/songs.json"
+  workflow_dispatch: {}   # manual "Run workflow" button for ad-hoc runs
+
+# Avoid overlapping kernel runs if several commits land close together.
+concurrency:
+  group: kaggle-trigger
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Kaggle CLI
+        run: pip install --quiet kaggle
+
+      - name: Write Kaggle credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
+            echo "::error::Missing repo secrets KAGGLE_USERNAME / KAGGLE_KEY"; exit 1
+          fi
+          mkdir -p ~/.kaggle
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+      # kaggle/*.ipynb is gitignored (generated from build_notebook.py), so a
+      # fresh checkout has no notebook -- regenerate it before pushing.
+      - name: Regenerate kernel notebook
+        run: python kaggle/build_notebook.py
+
+      - name: Stamp run time into kernel title (forces a fresh version)
+        run: |
+          python - <<'PY'
+          import json, datetime
+          p = "kaggle/kernel-metadata.json"
+          m = json.load(open(p))
+          stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          m["title"] = f"ACE-Step Daily ({stamp})"
+          json.dump(m, open(p, "w"), indent=2)
+          print("title ->", m["title"])
+          PY
+
+      - name: Push & run kernel
+        run: kaggle kernels push -p kaggle/
+
+      - name: Where to watch it
+        run: echo "Run started. Watch it at https://www.kaggle.com/code (your 'ACE-Step Daily' kernel)."

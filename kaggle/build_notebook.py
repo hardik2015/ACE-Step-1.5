@@ -9,7 +9,8 @@ The output notebook has ONE code cell that:
     status 0 (queued/running) -> 1 (succeeded) | 2 (failed)
   - audio file paths returned by the server are copied (or fetched via
     GET /v1/audio when the local path is unreachable) into LOCAL_OUT,
-    or uploaded to a Shared Drive folder when OUTPUT_MODE="gdrive"
+    or uploaded to a Google Drive folder when OUTPUT_MODE="gdrive"
+    (personal My Drive via OAuth token, or a Shared Drive via service account)
 
 This is the cleanest possible approach: the FastAPI server already speaks
 JSON in/out (GenerateMusicRequest), so we drop the 78-field positional
@@ -34,10 +35,19 @@ NOTEBOOK_CELL_TEMPLATE = r'''# =================================================
 #
 # Prereqs:
 #   - Kaggle: Settings -> Accelerator = GPU T4 x2, Internet = ON
-#   - Optional Drive upload: add Kaggle Secret GDRIVE_SA_JSON (service account
-#     JSON). The target folder must live in a SHARED DRIVE (service accounts
-#     have no personal-Drive quota). Put the folder id in GDRIVE_FOLDER_ID
-#     below or expose it as the Kaggle secret GDRIVE_FOLDER_ID.
+#   - Drive upload (OUTPUT_MODE="gdrive"): add the destination folder id as the
+#     constant GDRIVE_FOLDER_ID below or the Kaggle secret GDRIVE_FOLDER_ID, plus
+#     ONE auth secret (auto-detected):
+#       GDRIVE_OAUTH_TOKEN -> personal "My Drive": an OAuth authorized-user JSON
+#                             (client_id/client_secret/refresh_token) minted once
+#                             by scripts/gdrive_oauth_setup.py. Personal Drive
+#                             folders MUST use this (service accounts can't write
+#                             to My Drive -- 0-byte quota -> storageQuotaExceeded).
+#                             Alternative (e.g. from the Google OAuth Playground):
+#                             supply GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID +
+#                             GDRIVE_CLIENT_SECRET as three separate secrets.
+#       GDRIVE_SA_JSON     -> Shared Drive: a service-account JSON. The target
+#                             folder must live in a Google Workspace Shared Drive.
 # =============================================================================
 
 # ----- CONFIG (edit these) ---------------------------------------------------
@@ -45,12 +55,12 @@ REPO_URL    = "https://github.com/hardik2015/ACE-Step-1.5.git"
 REPO_BRANCH = "main"
 WORK_DIR    = "/kaggle/tmp/ACE-Step-1.5"
 
-OUTPUT_MODE       = "local"                                # "local" | "gdrive"
+OUTPUT_MODE       = "gdrive"                               # "local" | "gdrive"
 LOCAL_OUT         = "/kaggle/working/acestep_output"
-GDRIVE_FOLDER_ID  = ""                                     # Shared Drive folder id
+GDRIVE_FOLDER_ID  = ""                                     # Drive folder id (or Kaggle secret)
 
-INPUT_MODE        = "inline"                               # "inline" | "file"
-INPUT_JSON_PATH   = "/kaggle/input/your-dataset/songs.json"
+INPUT_MODE        = "file"                                 # "inline" | "file"
+INPUT_JSON_PATH   = f"{WORK_DIR}/kaggle/songs.json"        # committed daily by the Claude routine
 
 SONG_JSON_INLINE = r"""
 {
@@ -389,31 +399,80 @@ with open(os.path.join(LOCAL_OUT, "manifest.json"), "w", encoding="utf-8") as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
 print(f"\nmanifest -> {LOCAL_OUT}/manifest.json")
 
-# 10) Optional Google Drive upload (Shared Drive folder required for SA).
+# 10) Google Drive upload. Auth is auto-detected from the Kaggle Secrets present:
+#   GDRIVE_OAUTH_TOKEN -> personal "My Drive" (OAuth authorized-user token).
+#   GDRIVE_SA_JSON     -> Shared Drive (service account). Used only if no OAuth
+#                         token is set, so existing Shared-Drive setups keep working.
+# GDRIVE_FOLDER_ID (constant above or same-named secret) is the destination folder.
 if OUTPUT_MODE == "gdrive":
-    try:
-        from kaggle_secrets import UserSecretsClient
-        sa_json = UserSecretsClient().get_secret("GDRIVE_SA_JSON")
-    except Exception as exc:
-        raise RuntimeError(f"Need Kaggle Secret GDRIVE_SA_JSON for Drive upload: {exc}")
-    folder = GDRIVE_FOLDER_ID
-    if not folder:
-        try:
-            folder = UserSecretsClient().get_secret("GDRIVE_FOLDER_ID")
-        except Exception:
-            raise RuntimeError("Set GDRIVE_FOLDER_ID or a Kaggle Secret of the same name.")
-    try:
-        from googleapiclient.discovery import build
-        from google.oauth2 import service_account
-        from googleapiclient.http import MediaFileUpload
-    except ImportError:
-        sh(f"{sys.executable} -m pip install -q google-api-python-client google-auth")
-        from googleapiclient.discovery import build
-        from google.oauth2 import service_account
-        from googleapiclient.http import MediaFileUpload
+    from kaggle_secrets import UserSecretsClient
+    _secrets = UserSecretsClient()
 
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(sa_json), scopes=["https://www.googleapis.com/auth/drive"])
+    def _secret(name):
+        try:
+            return _secrets.get_secret(name)
+        except Exception:
+            return ""
+
+    # Personal My Drive via OAuth refresh token. Supply EITHER:
+    #   GDRIVE_OAUTH_TOKEN  -> one authorized-user JSON (client_id + client_secret
+    #                          + refresh_token), as printed by gdrive_oauth_setup.py
+    # OR the three pieces separately (handy with the Google OAuth Playground):
+    #   GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET
+    oauth_token   = _secret("GDRIVE_OAUTH_TOKEN")
+    refresh_token = _secret("GDRIVE_REFRESH_TOKEN")
+    client_id     = _secret("GDRIVE_CLIENT_ID")
+    client_secret = _secret("GDRIVE_CLIENT_SECRET")
+    have_oauth = bool(oauth_token) or bool(refresh_token and client_id and client_secret)
+    sa_json    = "" if have_oauth else _secret("GDRIVE_SA_JSON")
+    if not have_oauth and not sa_json:
+        raise RuntimeError(
+            "Drive upload needs Kaggle Secrets: GDRIVE_OAUTH_TOKEN, or "
+            "GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET "
+            "(personal My Drive), or GDRIVE_SA_JSON (Shared Drive).")
+
+    folder = GDRIVE_FOLDER_ID or _secret("GDRIVE_FOLDER_ID")
+    if not folder:
+        raise RuntimeError("Set GDRIVE_FOLDER_ID (constant above or Kaggle Secret).")
+
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials as UserCredentials
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+    except ImportError:
+        sh(f"{sys.executable} -m pip install -q "
+           f"google-api-python-client google-auth google-auth-oauthlib")
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials as UserCredentials
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+
+    # Full drive scope (not drive.file) so the token may upload into a
+    # pre-existing folder it did not itself create.
+    SCOPES = ["https://www.googleapis.com/auth/drive"]
+    if have_oauth:
+        if oauth_token:
+            info = json.loads(oauth_token)
+        else:
+            info = {
+                "refresh_token": refresh_token,
+                "client_id":     client_id,
+                "client_secret": client_secret,
+                "token_uri":     "https://oauth2.googleapis.com/token",
+                "type":          "authorized_user",
+            }
+        creds = UserCredentials.from_authorized_user_info(info, scopes=SCOPES)
+        # The stored creds carry only the refresh token; mint a live access token.
+        if not creds.valid and creds.refresh_token:
+            creds.refresh(GoogleAuthRequest())
+        print("[drive] auth: OAuth user refresh token (personal My Drive)")
+    else:
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(sa_json), scopes=SCOPES)
+        print("[drive] auth: service account (Shared Drive)")
     svc = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     AUDIO_EXTS = {".mp3", ".wav", ".flac", ".opus", ".aac"}

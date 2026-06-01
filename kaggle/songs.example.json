@@ -1,0 +1,23 @@
+{
+  "_README": "Schema for kaggle/songs.json -- the daily song spec the Kaggle kernel reads (INPUT_MODE='file'). The Claude routine OVERWRITES kaggle/songs.json each morning. This .example file is documentation only and is NOT read by the kernel. A day may be a single object (below), a bare list of objects, or {\"songs\": [ ... ]} for multiple songs.",
+
+  "title":          "Human-readable title; used only to name the output files.",
+  "prompt":         "REQUIRED. The caption/style description (genre, instruments, mood, vocals). Alias: 'caption'. This is the single most important field.",
+  "lyrics":         "REQUIRED. Structured lyrics with section tags, e.g. [verse]...\\n[chorus]...  Use \\n for line breaks.",
+  "vocal_language": "Language hint, or 'unknown' to auto-detect from the lyrics.",
+
+  "_optional_overrides": "Everything below is optional; omit to let the LM auto-infer. Field names match GenerateMusicRequest; convenience aliases are mapped in build_notebook.py:_build_request_body.",
+  "bpm":            120,
+  "keyscale":       "C Major",
+  "timesignature":  "4/4",
+  "duration":       210,
+  "inference_steps": 50,
+  "guidance_scale":  7.0,
+
+  "_multi_song_example": {
+    "songs": [
+      { "title": "Song A", "prompt": "lofi hip hop, mellow, rainy night", "lyrics": "[verse]\n..." },
+      { "title": "Song B", "prompt": "uplifting synthwave, 80s, driving", "lyrics": "[chorus]\n..." }
+    ]
+  }
+}

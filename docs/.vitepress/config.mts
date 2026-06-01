@@ -169,6 +169,7 @@ function sidebarEN() {
       {
         text: 'Advanced',
         items: [
+          { text: 'Daily Automation (Kaggle)', link: '/en/DAILY_AUTOMATION' },
           { text: 'LoRA Training', link: '/en/LoRA_Training_Tutorial' },
           { text: 'GPU Compatibility', link: '/en/GPU_COMPATIBILITY' },
           { text: 'GPU Troubleshooting', link: '/en/GPU_TROUBLESHOOTING' },
