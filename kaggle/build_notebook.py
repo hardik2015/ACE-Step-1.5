@@ -136,6 +136,15 @@ API_READY_TIMEOUT_S = 60 * 30           # first run downloads ~13GB weights
 JOB_POLL_INTERVAL_S = 5
 JOB_TIMEOUT_S       = 60 * 60           # per-song wall clock budget
 
+# Version scoring (runs after generation): a broken-take filter (clipping /
+# silence / loudness / duration) gates out duds, then Whisper transcribes each
+# take and we rank by lyric word-error-rate vs the intended lyrics. The winner
+# is renamed with a _BEST suffix. Best-effort: any failure here just skips
+# ranking, it never drops a generated file.
+SCORE_VERSIONS = True
+WHISPER_MODEL  = "base"   # "base" fast | "small"/"medium" more accurate (multilingual)
+WHISPER_DEVICE = "cpu"    # CPU avoids VRAM contention with the still-running API server
+
 # ----- IMPLEMENTATION --------------------------------------------------------
 import os, sys, json, time, shutil, subprocess, pathlib, datetime
 import http.client
@@ -403,6 +412,122 @@ for i, song in enumerate(songs, 1):
         "versions": versions,
         "success": any(x["success"] for x in versions),
     })
+
+# 9.5) Score the takes: broken-take filter (hard gate) + Whisper lyric-WER.
+import re
+
+
+def _norm_words(s):
+    """Lowercase, drop [structure tags], strip punctuation -> word list."""
+    s = re.sub(r"\[[^\]]*\]", " ", s or "")          # remove [verse]/[chorus]/hints
+    s = re.sub(r"[^\w\s]", " ", s.lower(), flags=re.UNICODE)
+    return [w for w in s.split() if w]
+
+
+def _wer(ref, hyp):
+    """Word error rate = Levenshtein(ref, hyp) / len(ref)."""
+    n, m = len(ref), len(hyp)
+    if n == 0:
+        return 0.0 if m == 0 else 1.0
+    prev = list(range(m + 1))
+    for i in range(1, n + 1):
+        cur = [i] + [0] * m
+        for j in range(1, m + 1):
+            cost = 0 if ref[i - 1] == hyp[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        prev = cur
+    return prev[m] / n
+
+
+def _audio_metrics(wav, sr):
+    """Cheap health metrics on a mono float waveform in [-1, 1]."""
+    import numpy as np
+    if wav.size == 0:
+        return {"duration_s": 0.0, "rms_dbfs": -120.0, "peak": 0.0,
+                "clip_ratio": 1.0, "silence_ratio": 1.0}
+    rms = float(np.sqrt(np.mean(wav ** 2)) + 1e-12)
+    fl = max(1, int(0.05 * sr))                       # 50 ms frames
+    nf = wav.size // fl
+    if nf:
+        fr = wav[:nf * fl].reshape(nf, fl)
+        fr_rms = np.sqrt(np.mean(fr ** 2, axis=1) + 1e-12)
+        silence_ratio = float(np.mean(fr_rms < 10 ** (-40 / 20)))   # < -40 dBFS
+    else:
+        silence_ratio = 1.0
+    return {
+        "duration_s":    round(wav.size / sr, 2),
+        "rms_dbfs":      round(20 * float(np.log10(rms)), 1),
+        "peak":          round(float(np.max(np.abs(wav))), 4),
+        "clip_ratio":    round(float(np.mean(np.abs(wav) > 0.99)), 4),
+        "silence_ratio": round(silence_ratio, 3),
+    }
+
+
+def _passes_filter(mx):
+    """Reject obviously broken takes (tunable thresholds)."""
+    return (mx["duration_s"] >= 20.0          # not a stub
+            and mx["rms_dbfs"] >= -35.0        # not near-silent
+            and mx["clip_ratio"] <= 0.02       # not heavily clipped
+            and mx["silence_ratio"] <= 0.6)    # not mostly silence
+
+
+if SCORE_VERSIONS:
+    try:
+        try:
+            import whisper
+        except ImportError:
+            sh(f"{sys.executable} -m pip install -q openai-whisper")
+            import whisper
+        print(f"[score] loading Whisper '{WHISPER_MODEL}' on {WHISPER_DEVICE} ...")
+        wmodel = whisper.load_model(WHISPER_MODEL, device=WHISPER_DEVICE)
+
+        for m in manifest:
+            song = songs[m["index"] - 1] if 0 <= m["index"] - 1 < len(songs) else {}
+            ref_words = _norm_words(song.get("lyrics", ""))
+            scored = []
+            for ver in m.get("versions", []):
+                for path in ver.get("paths", []):
+                    try:
+                        wav = whisper.load_audio(path)            # 16 kHz mono float32
+                        mx = _audio_metrics(wav, 16000)
+                        passed = _passes_filter(mx)
+                        tr = wmodel.transcribe(wav, fp16=(WHISPER_DEVICE != "cpu"))
+                        wer = round(_wer(ref_words, _norm_words(tr.get("text", ""))), 4)
+                        # Lyric accuracy; a failed health filter disqualifies (-1).
+                        score = round(1.0 - wer, 4) if passed else -1.0
+                        rec = {"version": ver.get("version"), "path": path,
+                               "passed": passed, "wer": wer, "score": score,
+                               "metrics": mx,
+                               "transcript": (tr.get("text") or "").strip()[:500]}
+                    except Exception as exc:
+                        rec = {"version": ver.get("version"), "path": path,
+                               "passed": False, "wer": None, "score": -1.0,
+                               "error": f"{type(exc).__name__}: {exc}"}
+                    scored.append(rec)
+                    print(f"   [score] v{rec['version']} pass={rec['passed']} "
+                          f"wer={rec['wer']} {os.path.basename(path)}")
+            m["scores"] = scored
+
+            ranked = sorted(scored, key=lambda r: (r["score"] if r["score"] is not None else -1.0),
+                            reverse=True)
+            if ranked:
+                best = ranked[0]
+                orig = best["path"]
+                m["best_version"], m["best_wer"], m["best_path"] = best["version"], best["wer"], orig
+                try:                                  # mark the winner so it stands out in Drive
+                    p = pathlib.Path(orig)
+                    if p.exists():
+                        bp = str(p.with_name(p.stem + "_BEST" + p.suffix))
+                        os.rename(orig, bp)
+                        best["path"] = m["best_path"] = bp
+                        for ver in m["versions"]:
+                            ver["paths"] = [bp if x == orig else x for x in ver.get("paths", [])]
+                except Exception as exc:
+                    print(f"[score] (could not rename winner: {exc})")
+                print(f"[score] BEST {m['title']!r}: v{m['best_version']} "
+                      f"wer={m['best_wer']} -> {os.path.basename(m['best_path'])}")
+    except Exception as exc:
+        print(f"[score] scoring skipped ({type(exc).__name__}: {exc})")
 
 # Manifest
 with open(os.path.join(LOCAL_OUT, "manifest.json"), "w", encoding="utf-8") as f:
