@@ -9,21 +9,23 @@ finished audio lands in a **Google Drive folder**.
     • writes kaggle/songs.json   • git commit + push → main
         │  (push touches kaggle/songs.json)
         ▼
-  GitHub Action  .github/workflows/kaggle-trigger.yml
+  GitHub Action  kaggle-trigger.yml   (fire-and-forget, ~2 min)
     1. build_notebook.py → notebook with __PLACEHOLDER__ secrets
-    2. replace placeholders with real values from GitHub repo secrets (no echo)
+    2. replace placeholders with real GitHub repo secret values (no echo)
     3. kaggle kernels push --accelerator NvidiaTeslaT4  → creates + runs on T4×2
-    4. wait for the run to finish
-    5. kaggle kernels delete -y   → purge the injected secrets from Kaggle
-        │
+        │  (then exits — the run continues on Kaggle)
         ▼
-  Kaggle kernel  (2×T4, internet ON, ephemeral — deleted after each run)
-    • git clone PRIVATE repo (main, via injected GITHUB_TOKEN) → gets songs.json
-    • acestep-api generates 5 takes → score (filter + WER + CLAP) → mark _BEST
+  Kaggle kernel  (2×T4, internet ON)   — finishes on its own (~20–40 min)
+    • git clone PRIVATE repo (via injected GITHUB_TOKEN) → reads songs.json
+    • generates 5 takes → score (filter + WER + CLAP) → mark _BEST
     • uploads mp3s + manifest.json → Google Drive folder
         │
         ▼
   Your Google Drive folder  ← finished songs appear here daily
+        ⋮
+  GitHub Action  kaggle-cleanup.yml   (scheduled ~11:00 IST, or manual)
+    • deletes the kernel → purges the injected secrets
+      (skips if a run is still in progress, so it can't kill it)
 ```
 
 **Why inject-and-delete, not Kaggle's secret store?** Two Kaggle-API limits shaped
@@ -31,8 +33,9 @@ this: `kaggle kernels push` (1) **unlinks the kernel's attached Secrets every pu
 (so a pushed run can't read them) and (2) can't request T4×2 by itself. So instead
 of relying on Kaggle secrets, the Action **bakes the secret values into the notebook**
 just before pushing (placeholders → real values from GitHub repo secrets), pushes
-with `--accelerator NvidiaTeslaT4` (Kaggle's T4 tier = 2 GPUs), waits for the run,
-then **deletes the whole kernel** so the values don't persist. The next day's push
+with `--accelerator NvidiaTeslaT4` (Kaggle's T4 tier = 2 GPUs), and exits — the run
+finishes on Kaggle on its own. A **separate cleanup workflow** then **deletes the
+whole kernel** a few hours later so the values don't persist. The next day's push
 recreates it (confirmed: push recreates a deleted kernel). All secrets live only in
 **GitHub repo secrets** (encrypted) — never in Kaggle's stored notebook long-term.
 
@@ -47,7 +50,8 @@ recreates it (confirmed: push recreates a deleted kernel). All secrets live only
 | `kaggle/songs.json` | **The daily artifact.** The routine overwrites this; the kernel reads it. |
 | `kaggle/songs.example.json` | Schema documentation (not read by the kernel). |
 | `kaggle/kernel-metadata.json` | Required by `kaggle kernels push`. Put your Kaggle username in `id`. |
-| `.github/workflows/kaggle-trigger.yml` | The daily trigger: on push to `kaggle/songs.json` it injects secrets, pushes+runs on T4×2, then deletes the kernel to purge them. |
+| `.github/workflows/kaggle-trigger.yml` | The daily trigger: on push to `kaggle/songs.json` it injects secrets and pushes+runs on T4×2 (fire-and-forget). |
+| `.github/workflows/kaggle-cleanup.yml` | Scheduled (~11:00 IST) + manual: deletes the kernel to purge the injected secrets once the run has finished. |
 | `scripts/gdrive_oauth_setup.py` | One-time local helper to mint the Drive OAuth token. |
 
 ---
@@ -125,16 +129,22 @@ No Kaggle-side secrets, no accelerator/internet toggles, no scheduler — the pu
 sets the accelerator (`--accelerator NvidiaTeslaT4`) and internet
 (`enable_internet: true`), and injects the secrets.
 
-### 3. (Nothing else) — the Action is the daily trigger
+### 3. (Nothing else) — two workflows handle it
 
-`kaggle-trigger.yml` runs on every commit to `kaggle/songs.json` (and has a manual
-**Run workflow** button). It regenerates the notebook, injects the secrets above,
-pushes on T4×2, waits for the run, then **deletes the kernel** to purge the secrets.
+- **`kaggle-trigger.yml`** runs on every commit to `kaggle/songs.json` (plus a
+  manual **Run workflow** button). It regenerates the notebook, injects the secrets
+  above, pushes on T4×2, and exits (~2 min). The Kaggle run finishes on its own.
+- **`kaggle-cleanup.yml`** runs on a daily schedule (~11:00 IST, plus manual). It
+  **deletes the kernel** to purge the injected secrets — skipping if a run is still
+  in progress so it can't kill it. The next day's trigger recreates the kernel.
+
 You don't configure anything on Kaggle.
 
-> Security note: during each run (~20–40 min) the secret values sit inside the
-> private Kaggle kernel; the final step deletes the whole kernel to remove them.
-> Keep the kernel private and the credentials minimally scoped.
+> Security note: between the run and the cleanup, the secret values sit inside the
+> **private** Kaggle kernel; the cleanup deletes the whole kernel to remove them.
+> Keep the kernel private and the credentials minimally scoped. If you want the
+> exposure window shorter, lower the cleanup schedule (but leave enough time for
+> the ~20–40 min run to finish).
 
 ### 4. The Claude routine (`/schedule`)
 

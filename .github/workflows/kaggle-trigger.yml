@@ -1,16 +1,16 @@
 name: Kaggle daily run (inject secrets, run on T4x2, purge)
 
-# Event-driven on the routine's songs.json commit:
+# Event-driven on the routine's songs.json commit (fire-and-forget):
 #   1. regenerate the notebook (placeholders)
 #   2. replace each __NAME__ placeholder with the real value from a GitHub repo
 #      secret (safely repr-encoded; never echoed)
 #   3. kaggle kernels push --accelerator NvidiaTeslaT4  (creates + runs on T4x2)
-#   4. wait for the run to finish
-#   5. DELETE the kernel so the injected secrets never persist on Kaggle
-#      (the next push recreates it -- confirmed push recreates a deleted kernel).
+# Then this workflow EXITS -- the Kaggle run finishes on its own (~20-40 min).
+# A separate workflow (kaggle-cleanup.yml) deletes the kernel later to purge the
+# injected secrets; the next push recreates it (confirmed push recreates).
 #
 # Secrets live ONLY in GitHub repo secrets (+ transiently on this runner / in the
-# kernel for the run window). Required repo secrets:
+# kernel until the cleanup runs). Required repo secrets:
 #   KAGGLE_API_TOKEN, MAIN_GITHUB_TOKEN (the clone PAT -- GITHUB_TOKEN is reserved),
 #   GDRIVE_FOLDER_ID, and GDRIVE_OAUTH_TOKEN  *or*  the trio
 #   GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET.
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -83,20 +83,4 @@ jobs:
           out=$(kaggle kernels push -p kaggle/ --accelerator NvidiaTeslaT4 2>&1) || true
           echo "$out"
           echo "$out" | grep -qi "successfully pushed" || { echo "::error::kaggle push failed"; exit 1; }
-
-      - name: Wait for the Kaggle run to finish
-        env:
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-        run: |
-          K=allinone2015/acestep-daily
-          for i in $(seq 1 90); do
-            s=$(kaggle kernels status "$K" 2>&1); echo "[$i] $s"
-            echo "$s" | grep -qiE "complete|error|cancel" && break
-            sleep 60
-          done
-
-      - name: Delete kernel to purge injected secrets
-        if: always()
-        env:
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-        run: kaggle kernels delete allinone2015/acestep-daily -y || echo "(nothing to delete)"
+          echo "Pushed & running. The Kaggle run finishes on its own; kaggle-cleanup.yml purges it later."
