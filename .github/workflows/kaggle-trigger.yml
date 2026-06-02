@@ -25,7 +25,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install Kaggle CLI
-        run: pip install --quiet kaggle
+        # Pin the classic CLI: it authenticates from ~/.kaggle/kaggle.json
+        # (username + key). The newer rewritten CLI dropped that for
+        # OAuth / KAGGLE_API_TOKEN and rejects these credentials.
+        run: pip install --quiet "kaggle<1.7"
 
       - name: Write Kaggle credentials
         env:
@@ -55,6 +58,9 @@ jobs:
           PY
 
       - name: Push & run kernel
+        env:                                   # classic CLI also reads these directly
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
         run: kaggle kernels push -p kaggle/
 
       - name: Where to watch it
