@@ -1,13 +1,15 @@
 name: Kaggle trigger
 
-# Fires when the daily Claude routine commits new lyrics. Pushes the kernel to
-# Kaggle, which both creates a new version AND runs it -> that run is the trigger.
+# Fires when the daily routine commits new lyrics. Pushes the kernel to Kaggle
+# with --accelerator NvidiaTeslaT4 (Kaggle's T4 tier IS the 2xT4 environment),
+# so it runs on T4x2 -- which the 2-GPU notebook (LM on cuda:1) needs. The push
+# creates a new version AND runs it -> that run is the trigger.
 on:
   push:
     branches: [main]
     paths:
       - "kaggle/songs.json"
-  workflow_dispatch: {}   # manual "Run workflow" button for ad-hoc runs
+  workflow_dispatch: {}   # manual "Run workflow" button
 
 # Avoid overlapping kernel runs if several commits land close together.
 concurrency:
@@ -54,7 +56,7 @@ jobs:
           if [ -z "$KAGGLE_API_TOKEN" ]; then
             echo "::error::Missing repo secret KAGGLE_API_TOKEN (Kaggle -> Settings -> API Tokens)"; exit 1
           fi
-          out=$(kaggle kernels push -p kaggle/ 2>&1) || true
+          out=$(kaggle kernels push -p kaggle/ --accelerator NvidiaTeslaT4 2>&1) || true
           echo "$out"
           if echo "$out" | grep -qiE "kernel push error|notebook not found|unauthorized|forbidden|invalid"; then
             echo "::error::kaggle kernels push failed (see output above)"; exit 1
