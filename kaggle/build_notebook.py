@@ -50,6 +50,23 @@ NOTEBOOK_CELL_TEMPLATE = r'''# =================================================
 #                             folder must live in a Google Workspace Shared Drive.
 # =============================================================================
 
+# ----- SECRETS (placeholders) ------------------------------------------------
+# The trigger workflow replaces each "__NAME__" token below with the real value
+# from a GitHub repo secret just before pushing, then DELETES the kernel after the
+# run so the values never persist. The committed notebook only ever holds the
+# placeholders. Unreplaced placeholders are ignored (so a stray local run is safe).
+import os as _os
+for _k, _v in {
+    "GITHUB_TOKEN":         "__GITHUB_TOKEN__",
+    "GDRIVE_FOLDER_ID":     "__GDRIVE_FOLDER_ID__",
+    "GDRIVE_OAUTH_TOKEN":   "__GDRIVE_OAUTH_TOKEN__",
+    "GDRIVE_REFRESH_TOKEN": "__GDRIVE_REFRESH_TOKEN__",
+    "GDRIVE_CLIENT_ID":     "__GDRIVE_CLIENT_ID__",
+    "GDRIVE_CLIENT_SECRET": "__GDRIVE_CLIENT_SECRET__",
+}.items():
+    if _v and not (_v.startswith("__") and _v.endswith("__")):
+        _os.environ[_k] = _v
+
 # ----- CONFIG (edit these) ---------------------------------------------------
 REPO_URL    = "https://github.com/hardik2015/ace-step-1.5-private.git"  # PRIVATE
 REPO_BRANCH = "main"
@@ -202,11 +219,17 @@ os.makedirs(os.path.dirname(WORK_DIR), exist_ok=True)
 
 
 def _kaggle_secret(name):
+    # Injected env wins (the trigger workflow bakes secret values into this
+    # notebook as os.environ assignments, then deletes the kernel after the run).
+    # Falls back to Kaggle's attached secrets if present.
+    v = os.environ.get(name)
+    if v:
+        return v
     try:
         from kaggle_secrets import UserSecretsClient
         return UserSecretsClient().get_secret(name)
     except Exception:
-        return os.environ.get(name, "")
+        return ""
 
 
 _gh_token = _kaggle_secret("GITHUB_TOKEN")
@@ -643,33 +666,25 @@ print(f"\nmanifest -> {LOCAL_OUT}/manifest.json")
 #                         token is set, so existing Shared-Drive setups keep working.
 # GDRIVE_FOLDER_ID (constant above or same-named secret) is the destination folder.
 if OUTPUT_MODE == "gdrive":
-    from kaggle_secrets import UserSecretsClient
-    _secrets = UserSecretsClient()
-
-    def _secret(name):
-        try:
-            return _secrets.get_secret(name)
-        except Exception:
-            return ""
-
     # Personal My Drive via OAuth refresh token. Supply EITHER:
     #   GDRIVE_OAUTH_TOKEN  -> one authorized-user JSON (client_id + client_secret
     #                          + refresh_token), as printed by gdrive_oauth_setup.py
     # OR the three pieces separately (handy with the Google OAuth Playground):
     #   GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET
-    oauth_token   = _secret("GDRIVE_OAUTH_TOKEN")
-    refresh_token = _secret("GDRIVE_REFRESH_TOKEN")
-    client_id     = _secret("GDRIVE_CLIENT_ID")
-    client_secret = _secret("GDRIVE_CLIENT_SECRET")
+    # Read via _kaggle_secret (injected env first, then Kaggle attached secrets).
+    oauth_token   = _kaggle_secret("GDRIVE_OAUTH_TOKEN")
+    refresh_token = _kaggle_secret("GDRIVE_REFRESH_TOKEN")
+    client_id     = _kaggle_secret("GDRIVE_CLIENT_ID")
+    client_secret = _kaggle_secret("GDRIVE_CLIENT_SECRET")
     have_oauth = bool(oauth_token) or bool(refresh_token and client_id and client_secret)
-    sa_json    = "" if have_oauth else _secret("GDRIVE_SA_JSON")
+    sa_json    = "" if have_oauth else _kaggle_secret("GDRIVE_SA_JSON")
     if not have_oauth and not sa_json:
         raise RuntimeError(
-            "Drive upload needs Kaggle Secrets: GDRIVE_OAUTH_TOKEN, or "
+            "Drive upload needs GDRIVE_OAUTH_TOKEN, or "
             "GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET "
             "(personal My Drive), or GDRIVE_SA_JSON (Shared Drive).")
 
-    folder = GDRIVE_FOLDER_ID or _secret("GDRIVE_FOLDER_ID")
+    folder = GDRIVE_FOLDER_ID or _kaggle_secret("GDRIVE_FOLDER_ID")
     if not folder:
         raise RuntimeError("Set GDRIVE_FOLDER_ID (constant above or Kaggle Secret).")
 

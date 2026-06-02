@@ -1,65 +1,102 @@
-name: Kaggle deploy (manual only)
+name: Kaggle daily run (inject secrets, run on T4x2, purge)
 
-# IMPORTANT: this is NOT the daily trigger. `kaggle kernels push` UNLINKS the
-# kernel's attached Secrets every time (known Kaggle API behavior), so a pushed
-# run can't read GITHUB_TOKEN / GDRIVE_* -> clone + upload fail. The daily run is
-# Kaggle's built-in SCHEDULER, which re-runs the UI-configured version (T4x2 +
-# internet + attached secrets). Use this ONLY to re-deploy notebook CODE changes,
-# and AFTER running it re-open Add-ons -> Secrets in the UI and press Done to
-# re-attach the secrets.
+# Event-driven on the routine's songs.json commit:
+#   1. regenerate the notebook (placeholders)
+#   2. replace each __NAME__ placeholder with the real value from a GitHub repo
+#      secret (safely repr-encoded; never echoed)
+#   3. kaggle kernels push --accelerator NvidiaTeslaT4  (creates + runs on T4x2)
+#   4. wait for the run to finish
+#   5. DELETE the kernel so the injected secrets never persist on Kaggle
+#      (the next push recreates it -- confirmed push recreates a deleted kernel).
+#
+# Secrets live ONLY in GitHub repo secrets (+ transiently on this runner / in the
+# kernel for the run window). Required repo secrets:
+#   KAGGLE_API_TOKEN, MAIN_GITHUB_TOKEN (the clone PAT -- GITHUB_TOKEN is reserved),
+#   GDRIVE_FOLDER_ID, and GDRIVE_OAUTH_TOKEN  *or*  the trio
+#   GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET.
 on:
+  push:
+    branches: [main]
+    paths: ["kaggle/songs.json"]
   workflow_dispatch: {}
 
-# Avoid overlapping kernel runs if several commits land close together.
 concurrency:
-  group: kaggle-trigger
+  group: kaggle-daily-run
   cancel-in-progress: false
 
 jobs:
-  trigger:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - run: pip install --quiet kaggle
 
-      - name: Install Kaggle CLI
-        run: pip install --quiet kaggle
+      - name: Regenerate notebook (placeholders)
+        run: python kaggle/build_notebook.py
 
-      # The notebook is committed (see .gitignore), so no rebuild is needed. We
-      # append a run-stamp comment to the notebook so each push is unique content
-      # and Kaggle creates a fresh, re-runnable version. We do NOT touch the title
-      # -- it must keep resolving to the kernel slug 'acestep-daily'.
-      - name: Stamp run time into the notebook (forces a fresh version)
+      - name: Replace placeholders with real secrets (no echo)
+        env:
+          MAIN_GITHUB_TOKEN: ${{ secrets.MAIN_GITHUB_TOKEN }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
         run: |
           python - <<'PY'
-          import json, datetime, re
+          import json, os
           p = "kaggle/acestep_kaggle_2xT4_weekly.ipynb"
           nb = json.load(open(p, encoding="utf-8"))
           src = nb["cells"][0]["source"]
           if isinstance(src, list):
               src = "".join(src)
-          stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-          src = re.sub(r"\n# run-stamp:.*\n?$", "\n", src).rstrip("\n") + f"\n# run-stamp: {stamp}\n"
+          mapping = {
+              "__GITHUB_TOKEN__":         os.environ.get("MAIN_GITHUB_TOKEN", ""),
+              "__GDRIVE_FOLDER_ID__":     os.environ.get("GDRIVE_FOLDER_ID", ""),
+              "__GDRIVE_OAUTH_TOKEN__":   os.environ.get("GDRIVE_OAUTH_TOKEN", ""),
+              "__GDRIVE_REFRESH_TOKEN__": os.environ.get("GDRIVE_REFRESH_TOKEN", ""),
+              "__GDRIVE_CLIENT_ID__":     os.environ.get("GDRIVE_CLIENT_ID", ""),
+              "__GDRIVE_CLIENT_SECRET__": os.environ.get("GDRIVE_CLIENT_SECRET", ""),
+          }
+          n = 0
+          for ph, val in mapping.items():
+              tok = '"%s"' % ph                       # the placeholder as written: "__NAME__"
+              if val and tok in src:
+                  src = src.replace(tok, repr(val))   # repr -> safe Python string literal
+                  n += 1
           nb["cells"][0]["source"] = src
           json.dump(nb, open(p, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
-          print("notebook run-stamp ->", stamp)
+          print("replaced %d placeholder(s)" % n)
+          if not os.environ.get("MAIN_GITHUB_TOKEN"):
+              print("::warning::MAIN_GITHUB_TOKEN is empty -- the private-repo clone will fail")
           PY
 
-      - name: Push & run kernel
+      - name: Push & run on T4x2
         env:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
-          if [ -z "$KAGGLE_API_TOKEN" ]; then
-            echo "::error::Missing repo secret KAGGLE_API_TOKEN (Kaggle -> Settings -> API Tokens)"; exit 1
-          fi
+          if [ -z "$KAGGLE_API_TOKEN" ]; then echo "::error::Missing KAGGLE_API_TOKEN"; exit 1; fi
           out=$(kaggle kernels push -p kaggle/ --accelerator NvidiaTeslaT4 2>&1) || true
           echo "$out"
-          if echo "$out" | grep -qiE "kernel push error|notebook not found|unauthorized|forbidden|invalid"; then
-            echo "::error::kaggle kernels push failed (see output above)"; exit 1
-          fi
+          echo "$out" | grep -qi "successfully pushed" || { echo "::error::kaggle push failed"; exit 1; }
 
-      - name: Where to watch it
-        run: echo "Run started. Watch it at https://www.kaggle.com/code (your 'ACE-Step Daily' kernel)."
+      - name: Wait for the Kaggle run to finish
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          K=allinone2015/acestep-daily
+          for i in $(seq 1 90); do
+            s=$(kaggle kernels status "$K" 2>&1); echo "[$i] $s"
+            echo "$s" | grep -qiE "complete|error|cancel" && break
+            sleep 60
+          done
+
+      - name: Delete kernel to purge injected secrets
+        if: always()
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: kaggle kernels delete allinone2015/acestep-daily -y || echo "(nothing to delete)"

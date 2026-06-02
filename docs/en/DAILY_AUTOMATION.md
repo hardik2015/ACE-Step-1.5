@@ -7,30 +7,34 @@ finished audio lands in a **Google Drive folder**.
 ```
   Daily 07:00 IST   Claude Code Routine  (/schedule, connected to the private repo)
     • writes kaggle/songs.json   • git commit + push → main
-        │  (just updates the repo)
+        │  (push touches kaggle/songs.json)
         ▼
-  Daily 07:30 IST   Kaggle built-in SCHEDULER re-runs the saved kernel version
-    • uses the UI-configured T4×2 + Internet + attached Secrets
-    • git clone PRIVATE repo (main, via GITHUB_TOKEN)  → gets the new songs.json
-    • reads kaggle/songs.json   (INPUT_MODE="file")
+  GitHub Action  .github/workflows/kaggle-trigger.yml
+    1. build_notebook.py → notebook with __PLACEHOLDER__ secrets
+    2. replace placeholders with real values from GitHub repo secrets (no echo)
+    3. kaggle kernels push --accelerator NvidiaTeslaT4  → creates + runs on T4×2
+    4. wait for the run to finish
+    5. kaggle kernels delete -y   → purge the injected secrets from Kaggle
+        │
+        ▼
+  Kaggle kernel  (2×T4, internet ON, ephemeral — deleted after each run)
+    • git clone PRIVATE repo (main, via injected GITHUB_TOKEN) → gets songs.json
     • acestep-api generates 5 takes → score (filter + WER + CLAP) → mark _BEST
     • uploads mp3s + manifest.json → Google Drive folder
-    • Secrets (attached in the UI): GITHUB_TOKEN, GDRIVE_FOLDER_ID,
-      GDRIVE_OAUTH_TOKEN (or the refresh trio)
         │
         ▼
   Your Google Drive folder  ← finished songs appear here daily
 ```
 
-**Why Kaggle's scheduler, not a GitHub-Action push?** Two Kaggle-API limits make
-`kaggle kernels push` unusable as the daily trigger: (1) it can't request **T4×2**
-(only a single P100, where `cuda:1` doesn't exist and the 2-GPU notebook fails);
-and decisively (2) **it unlinks the kernel's attached Secrets on every push**, so a
-pushed run can't read `GITHUB_TOKEN` / `GDRIVE_*` and the clone + Drive upload fail.
-Kaggle's UI runs and its built-in **scheduler** keep the configured accelerator,
-internet, and secrets — so the scheduler re-runs the saved, fully-configured
-version daily. The `/schedule` routine just commits `songs.json`; the kernel clones
-the latest repo when the scheduler fires.
+**Why inject-and-delete, not Kaggle's secret store?** Two Kaggle-API limits shaped
+this: `kaggle kernels push` (1) **unlinks the kernel's attached Secrets every push**
+(so a pushed run can't read them) and (2) can't request T4×2 by itself. So instead
+of relying on Kaggle secrets, the Action **bakes the secret values into the notebook**
+just before pushing (placeholders → real values from GitHub repo secrets), pushes
+with `--accelerator NvidiaTeslaT4` (Kaggle's T4 tier = 2 GPUs), waits for the run,
+then **deletes the whole kernel** so the values don't persist. The next day's push
+recreates it (confirmed: push recreates a deleted kernel). All secrets live only in
+**GitHub repo secrets** (encrypted) — never in Kaggle's stored notebook long-term.
 
 ---
 
@@ -43,7 +47,7 @@ the latest repo when the scheduler fires.
 | `kaggle/songs.json` | **The daily artifact.** The routine overwrites this; the kernel reads it. |
 | `kaggle/songs.example.json` | Schema documentation (not read by the kernel). |
 | `kaggle/kernel-metadata.json` | Required by `kaggle kernels push`. Put your Kaggle username in `id`. |
-| `.github/workflows/kaggle-trigger.yml` | Trigger: on push to `kaggle/songs.json`, pushes+runs the kernel. |
+| `.github/workflows/kaggle-trigger.yml` | The daily trigger: on push to `kaggle/songs.json` it injects secrets, pushes+runs on T4×2, then deletes the kernel to purge them. |
 | `scripts/gdrive_oauth_setup.py` | One-time local helper to mint the Drive OAuth token. |
 
 ---
@@ -75,8 +79,8 @@ method below. Both first require an OAuth client:
 3. In "Step 1", enter the scope `https://www.googleapis.com/auth/drive` →
    **Authorize APIs** → approve.
 4. "Step 2" → **Exchange authorization code for tokens** → copy the **Refresh token**.
-5. You now have all three values. Set them as **three Kaggle secrets**:
-   `GDRIVE_REFRESH_TOKEN`, `GDRIVE_CLIENT_ID`, `GDRIVE_CLIENT_SECRET`.
+5. You now have all three values. Set them as **three GitHub repo secrets**
+   (step 2): `GDRIVE_REFRESH_TOKEN`, `GDRIVE_CLIENT_ID`, `GDRIVE_CLIENT_SECRET`.
 
 **Method B — local helper script (one bundled secret):**
 1. Create the client as type **Desktop app** → download the JSON.
@@ -86,51 +90,51 @@ method below. Both first require an OAuth client:
    python scripts/gdrive_oauth_setup.py path/to/client_secret.json
    ```
    A browser opens; approve. The script prints an **authorized-user JSON** (it
-   contains the refresh token) — set it as the single Kaggle secret `GDRIVE_OAUTH_TOKEN`.
+   contains the refresh token) — set it as the single GitHub repo secret `GDRIVE_OAUTH_TOKEN`.
 
 **Then (both methods):** in Google Drive, create/open the destination folder. Its
-**folder id** is the part after `/folders/` in the URL → Kaggle secret `GDRIVE_FOLDER_ID`.
+**folder id** is the part after `/folders/` in the URL → GitHub repo secret `GDRIVE_FOLDER_ID`.
 
 ### 1b. GitHub token (the repo is PRIVATE)
 
-The pipeline lives in the **private** repo `hardik2015/ace-step-1.5-private`, so
-the Kaggle kernel needs a token to clone it.
+The pipeline lives in the **private** repo `hardik2015/ace-step-1.5-private`, so the
+kernel needs a token to clone it.
 
 1. GitHub → **Settings → Developer settings → Personal access tokens →
    Fine-grained tokens → Generate new token**.
 2. **Resource owner** = your account; **Repository access** = *Only select
    repositories* → `ace-step-1.5-private`; **Permissions → Repository → Contents
    = Read-only**. Generate and copy the token (`github_pat_...`).
-3. You'll add it as the Kaggle secret `GITHUB_TOKEN` in step 2.
+3. Add it as the GitHub repo secret **`MAIN_GITHUB_TOKEN`** in step 2. (It can't be
+   named `GITHUB_TOKEN` — that name is reserved by GitHub Actions.)
 
-### 2. Kaggle kernel: configure, run once, and schedule (all in the UI)
+### 2. GitHub repo secrets (this is where ALL secrets live)
 
-The kernel `allinone2015/acestep-daily` already has the code. From here everything
-is done in the **Kaggle UI** — do **not** `kaggle kernels push` again (each push
-unlinks your secrets). Open the notebook editor and:
+The Action bakes these into the notebook at push time, then deletes the kernel
+afterward — so nothing is stored on Kaggle. On the **private** repo →
+**Settings → Secrets and variables → Actions → New repository secret**:
 
-1. **Settings:** Accelerator = **GPU T4 ×2**, Internet = **ON**.
-2. **Add-ons → Secrets:** attach (toggle ON) — labels must match **exactly**:
-   - `GITHUB_TOKEN` — fine-grained PAT from step 1b (Contents: Read on the repo)
-   - `GDRIVE_FOLDER_ID` — folder id from step 1
-   - `GDRIVE_OAUTH_TOKEN`, **or** the trio `GDRIVE_REFRESH_TOKEN` + `GDRIVE_CLIENT_ID` + `GDRIVE_CLIENT_SECRET`
+| Secret | Value |
+|--------|-------|
+| `KAGGLE_API_TOKEN` | Kaggle → Settings → API → API Tokens (Recommended) → create, copy |
+| `MAIN_GITHUB_TOKEN` | the fine-grained PAT from step 1b (clones the private repo) |
+| `GDRIVE_FOLDER_ID` | your Drive folder id |
+| `GDRIVE_OAUTH_TOKEN` **or** the trio `GDRIVE_REFRESH_TOKEN` + `GDRIVE_CLIENT_ID` + `GDRIVE_CLIENT_SECRET` | the Drive auth from step 1 |
 
-   Press **Done** so they're attached to this notebook.
-3. **Save Version → Save & Run All (Commit)** once. Watch the Logs — the clone
-   should succeed and a song should land in Drive. This proves the config.
-4. **Schedule it (the daily trigger):** **Save Version → Schedule a notebook run →
-   Daily**, time ≈ **07:30 IST** (≈30 min after the routine commits). Scheduled
-   runs reuse this saved version with its T4×2 + internet + attached secrets, and
-   clone the latest repo each morning to pick up that day's `songs.json`.
+No Kaggle-side secrets, no accelerator/internet toggles, no scheduler — the push
+sets the accelerator (`--accelerator NvidiaTeslaT4`) and internet
+(`enable_internet: true`), and injects the secrets.
 
-### 3. The GitHub Action is manual-only (not the daily trigger)
+### 3. (Nothing else) — the Action is the daily trigger
 
-`kaggle-trigger.yml` no longer runs on commits — it's `workflow_dispatch`-only, for
-re-deploying notebook **code** changes. Because a push **unlinks secrets**, after
-running it you must re-open **Add-ons → Secrets** in the UI and press **Done** to
-re-attach them (then the next scheduled run works again). For normal daily
-operation you never touch it. It needs the `KAGGLE_API_TOKEN` repo secret only if
-you use it.
+`kaggle-trigger.yml` runs on every commit to `kaggle/songs.json` (and has a manual
+**Run workflow** button). It regenerates the notebook, injects the secrets above,
+pushes on T4×2, waits for the run, then **deletes the kernel** to purge the secrets.
+You don't configure anything on Kaggle.
+
+> Security note: during each run (~20–40 min) the secret values sit inside the
+> private Kaggle kernel; the final step deletes the whole kernel to remove them.
+> Keep the kernel private and the credentials minimally scoped.
 
 ### 4. The Claude routine (`/schedule`)
 
@@ -145,8 +149,8 @@ In Claude Code, run `/schedule` and create a daily routine with this prompt:
 > alternate takes of that one song. Then run:
 > `git add kaggle/songs.json && git commit -m "daily lyrics $(date +%F)" && git push origin main`.
 
-- **Schedule:** routine at **07:00 IST** (cron `30 1 * * *` UTC); set Kaggle's
-  notebook schedule ~30 min later (≈07:30 IST) so the commit lands first.
+- **Schedule:** routine at **07:00 IST** (cron `30 1 * * *` UTC). Its commit fires
+  the GitHub Action immediately (event-driven) — no Kaggle scheduling needed.
 - **Connect the routine to the private repo** `hardik2015/ace-step-1.5-private`
   (its `main` is what the kernel clones). `git push origin main` then targets it.
 - The routine needs permission to **push to `main`**. If `main` is branch-protected,
@@ -236,14 +240,15 @@ Notes & limits:
 
 ## Running it manually / testing
 
-- **Run it now:** in the Kaggle editor → **Save Version → Save & Run All (Commit)**.
-  Uses the UI-attached secrets + T4×2. Watch the Logs; the mp3s + `manifest.json`
-  appear in your Drive folder on success.
-- **Daily:** Kaggle's scheduler re-runs that saved version (≈07:30 IST); the routine
-  commits the day's `songs.json` first (≈07:00 IST), which the run clones.
-- **Re-deploy notebook code changes:** regenerate (`python kaggle/build_notebook.py`),
-  then run the manual `Kaggle deploy` Action (or push locally) — and afterward
-  **re-attach the secrets** in Add-ons → Secrets → Done (the push unlinks them).
+- **Run it now:** GitHub → **Actions → "Kaggle daily run" → Run workflow**
+  (`workflow_dispatch`). It injects secrets, pushes on T4×2, waits, then deletes the
+  kernel. Watch the kernel live at
+  <https://www.kaggle.com/code/allinone2015/acestep-daily> while it runs; the mp3s +
+  `manifest.json` land in your Drive folder.
+- **End to end:** edit `kaggle/songs.json`, commit, push to `main` → the Action
+  fires automatically.
+- **Read the Action log** to follow it: `replaced N placeholder(s)` → `successfully
+  pushed` → the status loop → kernel deleted.
 
 ---
 
@@ -255,9 +260,8 @@ Notes & limits:
   the binding constraint — keep songs short or skip days if you approach the cap.
 - **Filename.** The kernel notebook is still named `acestep_kaggle_2xT4_weekly.ipynb`
   (historical); it now runs daily.
-- **Identical pushes.** The trigger workflow appends a `# run-stamp:` comment to
-  the notebook before pushing, so Kaggle always sees fresh content and creates a
-  new, runnable version (the title is left alone so it keeps matching the slug).
+- **Fresh run guaranteed.** Because the Action deletes the kernel after each run,
+  the next push always *creates* it (version 1) and runs — no stale/no-op pushes.
 - **Scoring time.** Whisper + CLAP add ~1–3 min per take on CPU, plus a one-time
   ~2 GB CLAP download per session. For 5 takes that's a few extra minutes per
   run — negligible vs. cold start.
@@ -274,8 +278,8 @@ Notes & limits:
 | `Set GDRIVE_FOLDER_ID...` | Add the `GDRIVE_FOLDER_ID` Kaggle secret (or set the constant in the notebook). |
 | Action runs but no Kaggle run starts | Check `kaggle/kernel-metadata.json` `id` matches your username; verify the `KAGGLE_API_TOKEN` secret. |
 | `401 - Unauthorized` on `kaggle kernels push` | `KAGGLE_API_TOKEN` is missing/invalid/expired. Re-create it under Kaggle Settings → API Tokens and update the repo secret. |
-| Kernel fails at `git clone` (`Authentication failed` / `could not read Username`) | `GITHUB_TOKEN` was empty/invalid: secret not attached to this notebook, **detached by a `kaggle kernels push`** (re-attach in Add-ons → Secrets → Done), Internet OFF (`get_secret` needs it), label mismatch, or the PAT lacks Contents-read / expired. |
-| Worked, then broke right after a code re-deploy | A `kaggle kernels push` **unlinks secrets**. Re-open Add-ons → Secrets → press **Done**, then let the scheduler run again. |
+| Kernel fails at `git clone` (`Authentication failed` / `could not read Username`) | `MAIN_GITHUB_TOKEN` repo secret missing/invalid, the PAT lacks **Contents: Read** on `ace-step-1.5-private`, or it expired. The Action's `replaced N placeholder(s)` line shows how many secrets were injected — if `N` is low/0, the repo secrets are missing. |
+| Kernel disappears from Kaggle after each run | Expected — the Action deletes it to purge the injected secrets. The next commit/run recreates it (version 1 each time). |
 | Kernel ran on a single **P100** (no `cuda:1`) and failed | The push didn't request T4×2. Ensure the Action runs `kaggle kernels push … --accelerator NvidiaTeslaT4` (Kaggle's T4 tier = 2 GPUs). |
 | Kernel can't download weights | Internet is OFF in the kernel Settings; turn it ON. |
 | OAuth setup prints "no refresh_token" | Revoke the app at <https://myaccount.google.com/permissions> and re-run the setup script. |
