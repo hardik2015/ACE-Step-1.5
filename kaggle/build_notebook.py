@@ -283,7 +283,7 @@ def _build_request_body(song):
     }
     body = dict(GEN_DEFAULTS)
     for k, v in song.items():
-        if k == "title":
+        if k in ("title", "versions"):   # local-only keys, not GenerateMusicRequest fields
             continue
         body[aliases.get(k, k)] = v
     return body
@@ -344,54 +344,64 @@ def _wait_for_job(task_id, deadline):
     raise TimeoutError(f"job {task_id} did not finish within {JOB_TIMEOUT_S}s")
 
 
-# 9) Run generation, one song at a time, on the same shared init.
+# 9) Run generation. Each song may request N "versions" (alternate takes) via a
+# `versions` field. We submit the SAME song N times on the already-loaded model,
+# keeping batch_size=1 so a 14.6GB T4 never OOMs (true batching would). Random
+# seeds (use_random_seed) make every take differ. The ~30min cold start is paid
+# once for the whole run regardless of N, so extra versions cost only gen time.
 os.makedirs(LOCAL_OUT, exist_ok=True)
 manifest = []
 for i, song in enumerate(songs, 1):
     title = (song.get("title") or song.get("prompt") or song.get("caption") or f"song{i}")[:80]
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    print(f"\n[gen {i}/{len(songs)}] {title!r}")
-    body = _build_request_body(song)
+    n_versions = max(1, int(song.get("versions", 1) or 1))
+    body = _build_request_body(song)            # "versions" is stripped inside
+    print(f"\n[gen {i}/{len(songs)}] {title!r}  x{n_versions} version(s)")
 
-    submit = _api_post("/release_task", body)
-    submit_data = (submit or {}).get("data") or {}
-    task_id = submit_data.get("task_id")
-    if not task_id:
-        raise RuntimeError(f"release_task did not return task_id: {submit}")
-    print(f"    task_id={task_id} queue_position={submit_data.get('queue_position')}")
+    versions = []
+    for v in range(1, n_versions + 1):
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        print(f"  -- version {v}/{n_versions}")
+        submit = _api_post("/release_task", body)
+        submit_data = (submit or {}).get("data") or {}
+        task_id = submit_data.get("task_id")
+        if not task_id:
+            raise RuntimeError(f"release_task did not return task_id: {submit}")
+        print(f"    task_id={task_id} queue_position={submit_data.get('queue_position')}")
 
-    deadline = time.time() + JOB_TIMEOUT_S
-    results = _wait_for_job(task_id, deadline)
+        deadline = time.time() + JOB_TIMEOUT_S
+        results = _wait_for_job(task_id, deadline)
 
-    saved = []
-    for ai, item in enumerate(results, 1):
-        file_ref = item.get("file") or ""
-        if not file_ref:
-            continue
-        # The server returns `file` as a ready-made URL, NOT a raw path:
-        #   "/v1/audio?path=<urlencoded filesystem path>"
-        # Recover the real path so we can copy it directly (the API server shares
-        # this container). Only if that fails do we fetch the URL as-is -- we must
-        # NOT pass file_ref back through /v1/audio?path=, because re-wrapping
-        # double-encodes the path and the server rejects it with 403.
-        parsed = urllib.parse.urlparse(file_ref)
-        local_path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0]
-        ext = pathlib.Path(local_path or file_ref).suffix or f".{GEN_DEFAULTS['audio_format']}"
-        dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_{ai}{ext}")
-        if local_path and os.path.exists(local_path):
-            shutil.copy2(local_path, dst)            # same container: just copy
-        else:
-            url = file_ref if parsed.scheme else f"{API_BASE}{file_ref}"
-            with urllib.request.urlopen(url, timeout=120) as r, open(dst, "wb") as out:
-                shutil.copyfileobj(r, out)
-        print(f"   -> {dst} ({os.path.getsize(dst)//1024} KB)")
-        saved.append(dst)
+        saved = []
+        for ai, item in enumerate(results, 1):
+            file_ref = item.get("file") or ""
+            if not file_ref:
+                continue
+            # The server returns `file` as a ready-made URL, NOT a raw path:
+            #   "/v1/audio?path=<urlencoded filesystem path>"
+            # Recover the real path so we can copy it directly (the API server shares
+            # this container). Only if that fails do we fetch the URL as-is -- we must
+            # NOT pass file_ref back through /v1/audio?path=, because re-wrapping
+            # double-encodes the path and the server rejects it with 403.
+            parsed = urllib.parse.urlparse(file_ref)
+            local_path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0]
+            ext = pathlib.Path(local_path or file_ref).suffix or f".{GEN_DEFAULTS['audio_format']}"
+            dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_v{v:02d}_{ai}{ext}")
+            if local_path and os.path.exists(local_path):
+                shutil.copy2(local_path, dst)            # same container: just copy
+            else:
+                url = file_ref if parsed.scheme else f"{API_BASE}{file_ref}"
+                with urllib.request.urlopen(url, timeout=120) as r, open(dst, "wb") as out:
+                    shutil.copyfileobj(r, out)
+            print(f"   -> {dst} ({os.path.getsize(dst)//1024} KB)")
+            saved.append(dst)
+        versions.append({"version": v, "task_id": task_id,
+                         "paths": saved, "success": bool(saved)})
+
     manifest.append({
         "index": i,
         "title": title,
-        "task_id": task_id,
-        "paths": saved,
-        "success": bool(saved),
+        "versions": versions,
+        "success": any(x["success"] for x in versions),
     })
 
 # Manifest

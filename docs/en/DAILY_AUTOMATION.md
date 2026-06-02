@@ -133,7 +133,8 @@ In Claude Code, run `/schedule` and create a daily routine with this prompt:
 > vocals), and complete structured `lyrics` with section tags like `[verse]` /
 > `[chorus]`. Vary the genre and mood from day to day and avoid AI-flavored cliché
 > lyrics. Write the result to `kaggle/songs.json` (overwrite it) following
-> `kaggle/songs.example.json`. Then run:
+> `kaggle/songs.example.json`, and set `"versions": 5` so the kernel renders five
+> alternate takes of that one song. Then run:
 > `git add kaggle/songs.json && git commit -m "daily lyrics $(date +%F)" && git push origin main`.
 
 - **Schedule:** every day at **7:00 AM IST** → cron `30 1 * * *` (UTC).
@@ -154,9 +155,17 @@ objects, or `{"songs": [ ... ]}`. Required: `prompt` (caption) and `lyrics`.
   "title": "Tera Sheher",
   "prompt": "modern Bollywood pop, romantic duet, lush strings, tabla groove, cinematic",
   "lyrics": "[verse]\n...\n[chorus]\n...\n",
-  "vocal_language": "unknown"
+  "vocal_language": "unknown",
+  "versions": 5
 }
 ```
+
+`versions` (default 1) renders N alternate takes of the *same* song: the kernel
+submits it N times on the already-loaded model with random seeds, so each take
+differs. Files are saved suffixed `_v01`…`_vNN`, and all are uploaded to Drive.
+Because the ~30 min cold start is paid once per run, 5 versions cost only the
+extra generation time (≈ `cold start + 5 × per-song`, ~1 h/run — comfortably
+inside the weekly quota).
 
 Optional overrides (omit to let the model auto-infer): `bpm`, `keyscale`
 (→`key_scale`), `timesignature` (→`time_signature`), `duration` (→`audio_duration`),

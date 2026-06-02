@@ -5,6 +5,7 @@
   "prompt":         "REQUIRED. The caption/style description (genre, instruments, mood, vocals). Alias: 'caption'. This is the single most important field.",
   "lyrics":         "REQUIRED. Structured lyrics with section tags, e.g. [verse]...\\n[chorus]...  Use \\n for line breaks.",
   "vocal_language": "Language hint, or 'unknown' to auto-detect from the lyrics.",
+  "versions":       "Optional int (default 1). N alternate takes of THIS song, generated sequentially with random seeds on the same loaded model. Files are suffixed _v01.._vNN. Cold start is paid once, so extra versions cost only generation time.",
 
   "_optional_overrides": "Everything below is optional; omit to let the LM auto-infer. Field names match GenerateMusicRequest; convenience aliases are mapped in build_notebook.py:_build_request_body.",
   "bpm":            120,
