@@ -27,19 +27,24 @@ jobs:
       - name: Install Kaggle CLI
         run: pip install --quiet kaggle
 
-      # The notebook is committed (see .gitignore), so no rebuild is needed --
-      # we only bump the title so Kaggle treats each push as a fresh, re-runnable
-      # version.
-      - name: Stamp run time into kernel title (forces a fresh version)
+      # The notebook is committed (see .gitignore), so no rebuild is needed. We
+      # append a run-stamp comment to the notebook so each push is unique content
+      # and Kaggle creates a fresh, re-runnable version. We do NOT touch the title
+      # -- it must keep resolving to the kernel slug 'acestep-daily'.
+      - name: Stamp run time into the notebook (forces a fresh version)
         run: |
           python - <<'PY'
-          import json, datetime
-          p = "kaggle/kernel-metadata.json"
-          m = json.load(open(p))
+          import json, datetime, re
+          p = "kaggle/acestep_kaggle_2xT4_weekly.ipynb"
+          nb = json.load(open(p, encoding="utf-8"))
+          src = nb["cells"][0]["source"]
+          if isinstance(src, list):
+              src = "".join(src)
           stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-          m["title"] = f"ACE-Step Daily ({stamp})"
-          json.dump(m, open(p, "w"), indent=2)
-          print("title ->", m["title"])
+          src = re.sub(r"\n# run-stamp:.*\n?$", "\n", src).rstrip("\n") + f"\n# run-stamp: {stamp}\n"
+          nb["cells"][0]["source"] = src
+          json.dump(nb, open(p, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+          print("notebook run-stamp ->", stamp)
           PY
 
       - name: Push & run kernel
@@ -49,7 +54,11 @@ jobs:
           if [ -z "$KAGGLE_API_TOKEN" ]; then
             echo "::error::Missing repo secret KAGGLE_API_TOKEN (Kaggle -> Settings -> API Tokens)"; exit 1
           fi
-          kaggle kernels push -p kaggle/
+          out=$(kaggle kernels push -p kaggle/ 2>&1) || true
+          echo "$out"
+          if echo "$out" | grep -qiE "kernel push error|notebook not found|unauthorized|forbidden|invalid"; then
+            echo "::error::kaggle kernels push failed (see output above)"; exit 1
+          fi
 
       - name: Where to watch it
         run: echo "Run started. Watch it at https://www.kaggle.com/code (your 'ACE-Step Daily' kernel)."
