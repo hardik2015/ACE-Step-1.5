@@ -177,20 +177,27 @@ Optional overrides (omit to let the model auto-infer): `bpm`, `keyscale`
 ## Picking the best take (automatic scoring)
 
 After generation, the kernel scores every take so you don't have to audition all
-five blind. Two signals, both run inside the same Kaggle session:
+five blind. Three signals, all run inside the same Kaggle session:
 
 1. **Broken-take filter (hard gate)** — cheap waveform checks reject duds:
    duration ≥ 20 s, loudness ≥ −35 dBFS (not near-silent), clipping ≤ 2 %,
-   silence ≤ 60 %. A take that fails is disqualified.
+   silence ≤ 60 %. A take that fails is disqualified (score `−1`) no matter how
+   it scores below.
 2. **Lyric word-error-rate** — [Whisper](https://github.com/openai/whisper)
    transcribes each surviving take; we compare it to your intended `lyrics`
-   (structure tags stripped) and rank by WER. **Lowest WER wins** — i.e. the take
-   that most clearly sings the words you wrote.
+   (structure tags stripped) and compute WER. Lower = sings your words more clearly.
+3. **CLAP style match** — [CLAP](https://huggingface.co/laion/larger_clap_music_and_speech)
+   measures text↔audio similarity between your `prompt` (caption) and each take.
+   Higher = better matches the requested genre/instruments/mood.
 
-The winner is renamed with a **`_BEST`** suffix (e.g. `..._v03_BEST.mp3`) so it's
-obvious in Drive, and `manifest.json` gains per-take `scores` (WER, pass/fail,
-loudness/clip/silence metrics, the transcript) plus `best_version` / `best_wer` /
-`best_path`. All five takes are still uploaded, so you can A/B by ear.
+**Final score** = the two signals min-max normalised across the song's passing
+takes, then blended `W_LYRIC·(lyric) + W_CLAP·(clap)` (default 0.6 / 0.4).
+Normalising makes the two scales comparable; the highest blended score wins. (With
+CLAP off, the score is simply `1 − WER`.) The winner is renamed with a **`_BEST`**
+suffix (e.g. `..._v03_BEST.mp3`) so it's obvious in Drive, and `manifest.json`
+gains per-take `scores` (wer, clap_sim, pass/fail, loudness/clip/silence metrics,
+transcript) plus `best_version` / `best_wer` / `best_clap` / `best_path`. All five
+takes are still uploaded, so you can A/B by ear.
 
 Config at the top of the notebook cell:
 
@@ -199,15 +206,20 @@ Config at the top of the notebook cell:
 | `SCORE_VERSIONS` | `True` | Turn scoring off entirely. |
 | `WHISPER_MODEL` | `"base"` | `"small"`/`"medium"` are more accurate (esp. non-English) but slower. |
 | `WHISPER_DEVICE` | `"cpu"` | CPU avoids VRAM contention with the running generator; `"cuda"` is faster if memory allows. |
+| `SCORE_CLAP` | `True` | Add CLAP style scoring (falls back to lyric-only if it can't load). |
+| `CLAP_MODEL` | `laion/larger_clap_music_and_speech` | Music+vocals CLAP checkpoint (~2 GB, auto-downloaded). |
+| `W_LYRIC` / `W_CLAP` | `0.6` / `0.4` | Blend weights (only used when CLAP is active). |
 
 Notes & limits:
-- Scoring is **best-effort** — if Whisper fails to install/run, the run logs a
-  warning and uploads the takes unscored; it never drops generated audio.
-- WER ranks *lyric clarity*, not musical taste. It reliably demotes mumbled/garbled
-  takes and surfaces the cleanest one — treat it as a strong shortlist, then trust
-  your ear between the top one or two.
-- Meaningful only for **vocal** tracks; instrumentals have no lyrics to match.
-- Needs `ffmpeg` (present on Kaggle) and `openai-whisper` (auto-installed if missing).
+- Scoring is **best-effort** — if Whisper or CLAP fails to install/run, the run
+  logs a warning and uses whatever signals it has (or uploads unscored); it never
+  drops generated audio.
+- These rank *lyric clarity* and *style match*, not musical taste. They reliably
+  demote mumbled/garbled/off-genre takes and surface a strong shortlist — then
+  trust your ear between the top one or two.
+- WER is meaningful only for **vocal** tracks; CLAP works for instrumentals too.
+- Needs `ffmpeg` (present on Kaggle), `openai-whisper`, and `transformers`
+  (auto-installed if missing).
 
 ---
 
@@ -233,8 +245,9 @@ Notes & limits:
   (historical); it now runs daily.
 - **Identical pushes.** The trigger workflow stamps the UTC time into the kernel
   title before pushing so Kaggle always creates a fresh, runnable version.
-- **Scoring time.** Whisper transcription adds ~1–3 min per take on CPU (less on
-  GPU). For 5 takes that's a few extra minutes per run — negligible vs. cold start.
+- **Scoring time.** Whisper + CLAP add ~1–3 min per take on CPU, plus a one-time
+  ~2 GB CLAP download per session. For 5 takes that's a few extra minutes per
+  run — negligible vs. cold start.
 
 ---
 

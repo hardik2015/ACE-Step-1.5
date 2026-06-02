@@ -136,14 +136,21 @@ API_READY_TIMEOUT_S = 60 * 30           # first run downloads ~13GB weights
 JOB_POLL_INTERVAL_S = 5
 JOB_TIMEOUT_S       = 60 * 60           # per-song wall clock budget
 
-# Version scoring (runs after generation): a broken-take filter (clipping /
-# silence / loudness / duration) gates out duds, then Whisper transcribes each
-# take and we rank by lyric word-error-rate vs the intended lyrics. The winner
-# is renamed with a _BEST suffix. Best-effort: any failure here just skips
-# ranking, it never drops a generated file.
+# Version scoring (runs after generation). A broken-take filter (clipping /
+# silence / loudness / duration) gates out duds, then two signals rank the
+# survivors: (1) Whisper lyric word-error-rate vs the intended lyrics, and
+# (2) CLAP text<->audio similarity vs the caption (how well the take matches the
+# requested STYLE). The two are min-max normalised per song and blended by the
+# weights below. The winner is renamed with a _BEST suffix. Best-effort: any
+# failure here just skips ranking, it never drops a generated file.
 SCORE_VERSIONS = True
 WHISPER_MODEL  = "base"   # "base" fast | "small"/"medium" more accurate (multilingual)
 WHISPER_DEVICE = "cpu"    # CPU avoids VRAM contention with the still-running API server
+SCORE_CLAP     = True     # add CLAP style-match scoring
+CLAP_MODEL     = "laion/larger_clap_music_and_speech"   # music+vocals CLAP checkpoint
+CLAP_DEVICE    = "cpu"
+W_LYRIC        = 0.6      # blend weights for the final score (lyric clarity ...
+W_CLAP         = 0.4      # ... vs. style match). Only used when CLAP is active.
 
 # ----- IMPLEMENTATION --------------------------------------------------------
 import os, sys, json, time, shutil, subprocess, pathlib, datetime
@@ -471,6 +478,34 @@ def _passes_filter(mx):
             and mx["silence_ratio"] <= 0.6)    # not mostly silence
 
 
+def _rank_takes(scored):
+    """Set rec['score'] for each take. Failed-filter takes get -1.0. Passing
+    takes: blend lyric clarity (1-WER) with CLAP style-match, each min-max
+    normalised across the song's passing takes so the two scales are comparable.
+    When no CLAP value is present, score is the absolute (1-WER)."""
+    for r in scored:
+        if not r.get("passed"):
+            r["score"] = -1.0
+    passing = [r for r in scored if r.get("passed")]
+    if not passing:
+        return
+    lyric = [1.0 - (r["wer"] if r.get("wer") is not None else 1.0) for r in passing]
+    use_clap = any(r.get("clap_sim") is not None for r in passing)
+    if use_clap:
+        clap = [r["clap_sim"] if r.get("clap_sim") is not None else 0.0 for r in passing]
+
+        def _mm(xs):
+            lo, hi = min(xs), max(xs)
+            return [0.5] * len(xs) if hi - lo < 1e-9 else [(x - lo) / (hi - lo) for x in xs]
+
+        ln, cn = _mm(lyric), _mm(clap)
+        for r, a, b in zip(passing, ln, cn):
+            r["score"] = round(W_LYRIC * a + W_CLAP * b, 4)
+    else:
+        for r, a in zip(passing, lyric):
+            r["score"] = round(a, 4)
+
+
 if SCORE_VERSIONS:
     try:
         try:
@@ -481,9 +516,41 @@ if SCORE_VERSIONS:
         print(f"[score] loading Whisper '{WHISPER_MODEL}' on {WHISPER_DEVICE} ...")
         wmodel = whisper.load_model(WHISPER_MODEL, device=WHISPER_DEVICE)
 
+        # Optional CLAP style-match model (HF transformers). On any failure we
+        # fall back to lyric-WER-only ranking rather than aborting scoring.
+        clap = clap_proc = None
+        if SCORE_CLAP:
+            try:
+                import torch
+                try:
+                    from transformers import ClapModel, ClapProcessor
+                except ImportError:
+                    sh(f"{sys.executable} -m pip install -q transformers")
+                    from transformers import ClapModel, ClapProcessor
+                print(f"[score] loading CLAP '{CLAP_MODEL}' on {CLAP_DEVICE} ...")
+                clap = ClapModel.from_pretrained(CLAP_MODEL).to(CLAP_DEVICE).eval()
+                clap_proc = ClapProcessor.from_pretrained(CLAP_MODEL)
+            except Exception as exc:
+                print(f"[score] CLAP disabled ({type(exc).__name__}: {exc}); lyric-WER only")
+                clap = clap_proc = None
+
+        def _clap_sim(wav48k, text):
+            """Cosine similarity between the caption text and the audio (48 kHz)."""
+            import torch
+            with torch.no_grad():
+                ti = clap_proc(text=[text], return_tensors="pt", padding=True).to(CLAP_DEVICE)
+                ai = clap_proc(audios=wav48k, sampling_rate=48000,
+                               return_tensors="pt").to(CLAP_DEVICE)
+                te = clap.get_text_features(**ti)
+                ae = clap.get_audio_features(**ai)
+                te = te / te.norm(dim=-1, keepdim=True)
+                ae = ae / ae.norm(dim=-1, keepdim=True)
+                return float((te * ae).sum(dim=-1).item())
+
         for m in manifest:
             song = songs[m["index"] - 1] if 0 <= m["index"] - 1 < len(songs) else {}
             ref_words = _norm_words(song.get("lyrics", ""))
+            caption = song.get("prompt") or song.get("caption") or ""
             scored = []
             for ver in m.get("versions", []):
                 for path in ver.get("paths", []):
@@ -493,27 +560,34 @@ if SCORE_VERSIONS:
                         passed = _passes_filter(mx)
                         tr = wmodel.transcribe(wav, fp16=(WHISPER_DEVICE != "cpu"))
                         wer = round(_wer(ref_words, _norm_words(tr.get("text", ""))), 4)
-                        # Lyric accuracy; a failed health filter disqualifies (-1).
-                        score = round(1.0 - wer, 4) if passed else -1.0
+                        clap_sim = None
+                        if clap is not None and caption:
+                            try:
+                                clap_sim = round(_clap_sim(
+                                    whisper.load_audio(path, sr=48000), caption), 4)
+                            except Exception as exc:
+                                print(f"   [score] clap failed v{ver.get('version')}: {exc}")
                         rec = {"version": ver.get("version"), "path": path,
-                               "passed": passed, "wer": wer, "score": score,
+                               "passed": passed, "wer": wer, "clap_sim": clap_sim,
                                "metrics": mx,
                                "transcript": (tr.get("text") or "").strip()[:500]}
                     except Exception as exc:
                         rec = {"version": ver.get("version"), "path": path,
-                               "passed": False, "wer": None, "score": -1.0,
+                               "passed": False, "wer": None, "clap_sim": None,
                                "error": f"{type(exc).__name__}: {exc}"}
                     scored.append(rec)
                     print(f"   [score] v{rec['version']} pass={rec['passed']} "
-                          f"wer={rec['wer']} {os.path.basename(path)}")
-            m["scores"] = scored
+                          f"wer={rec.get('wer')} clap={rec.get('clap_sim')} "
+                          f"{os.path.basename(path)}")
 
-            ranked = sorted(scored, key=lambda r: (r["score"] if r["score"] is not None else -1.0),
-                            reverse=True)
+            _rank_takes(scored)                       # sets rec['score'] for all takes
+            m["scores"] = scored
+            ranked = sorted(scored, key=lambda r: r.get("score", -1.0), reverse=True)
             if ranked:
                 best = ranked[0]
                 orig = best["path"]
-                m["best_version"], m["best_wer"], m["best_path"] = best["version"], best["wer"], orig
+                m["best_version"], m["best_wer"] = best["version"], best.get("wer")
+                m["best_clap"], m["best_path"] = best.get("clap_sim"), orig
                 try:                                  # mark the winner so it stands out in Drive
                     p = pathlib.Path(orig)
                     if p.exists():
@@ -525,7 +599,8 @@ if SCORE_VERSIONS:
                 except Exception as exc:
                     print(f"[score] (could not rename winner: {exc})")
                 print(f"[score] BEST {m['title']!r}: v{m['best_version']} "
-                      f"wer={m['best_wer']} -> {os.path.basename(m['best_path'])}")
+                      f"wer={m['best_wer']} clap={m['best_clap']} score={best.get('score')} "
+                      f"-> {os.path.basename(m['best_path'])}")
     except Exception as exc:
         print(f"[score] scoring skipped ({type(exc).__name__}: {exc})")
 
