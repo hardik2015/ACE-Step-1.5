@@ -20,11 +20,11 @@ finished audio lands in a **Google Drive folder**.
         │
         ▼
   Kaggle kernel  (2×T4, internet ON)
-    • git clone repo (main)
+    • git clone PRIVATE repo (main, via GITHUB_TOKEN)
     • reads kaggle/songs.json   (INPUT_MODE="file")
     • acestep-api generates the song(s)
     • uploads mp3 + manifest.json → Google Drive folder
-    • secrets: GDRIVE_OAUTH_TOKEN, GDRIVE_FOLDER_ID
+    • secrets: GITHUB_TOKEN, GDRIVE_OAUTH_TOKEN, GDRIVE_FOLDER_ID
         │
         ▼
   Your Google Drive folder  ← finished songs appear here daily
@@ -94,12 +94,24 @@ method below. Both first require an OAuth client:
 **Then (both methods):** in Google Drive, create/open the destination folder. Its
 **folder id** is the part after `/folders/` in the URL → Kaggle secret `GDRIVE_FOLDER_ID`.
 
+### 1b. GitHub token (the repo is PRIVATE)
+
+The pipeline lives in the **private** repo `hardik2015/ace-step-1.5-private`, so
+the Kaggle kernel needs a token to clone it.
+
+1. GitHub → **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**.
+2. **Resource owner** = your account; **Repository access** = *Only select
+   repositories* → `ace-step-1.5-private`; **Permissions → Repository → Contents
+   = Read-only**. Generate and copy the token (`github_pat_...`).
+3. You'll add it as the Kaggle secret `GITHUB_TOKEN` in step 2.
+
 ### 2. Kaggle kernel (one-time UI config)
 
 `kernel-metadata.json` cannot select the T4×2 accelerator or attach secrets — set
 those in the UI once; they persist across every `kaggle kernels push`.
 
-1. Edit `kaggle/kernel-metadata.json`: set `"id": "<your-kaggle-username>/acestep-daily"`.
+1. `kaggle/kernel-metadata.json` is already set to `allinone2015/acestep-daily`.
 2. Push the kernel the first time so it exists (the notebook is already committed
    in `kaggle/`; only rebuild it if you changed `build_notebook.py`):
    ```bash
@@ -110,14 +122,18 @@ those in the UI once; they persist across every `kaggle kernels push`.
 3. Open the kernel on kaggle.com → **Settings/Add-ons**:
    - **Accelerator = GPU T4 ×2**
    - **Internet = ON**
-   - **Secrets →** add `GDRIVE_FOLDER_ID` (folder id from step 1) plus your
-     refresh-token secret(s) from step 1: either the single `GDRIVE_OAUTH_TOKEN`
-     (Method B), or the three `GDRIVE_REFRESH_TOKEN` + `GDRIVE_CLIENT_ID` +
-     `GDRIVE_CLIENT_SECRET` (Method A).
+   - **Secrets →** add:
+     - `GITHUB_TOKEN` — the fine-grained PAT from step 1b (clones the private repo)
+     - `GDRIVE_FOLDER_ID` — folder id from step 1
+     - your refresh-token secret(s) from step 1: either the single
+       `GDRIVE_OAUTH_TOKEN` (Method B), or the three `GDRIVE_REFRESH_TOKEN` +
+       `GDRIVE_CLIENT_ID` + `GDRIVE_CLIENT_SECRET` (Method A).
 
 ### 3. GitHub repo secrets (for the trigger Action)
 
-Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+On the **private** repo `hardik2015/ace-step-1.5-private` (secrets do **not**
+transfer from the old fork) → **Settings → Secrets and variables → Actions →
+New repository secret**:
 
 | Secret | Value |
 |--------|-------|
@@ -138,6 +154,8 @@ In Claude Code, run `/schedule` and create a daily routine with this prompt:
 > `git add kaggle/songs.json && git commit -m "daily lyrics $(date +%F)" && git push origin main`.
 
 - **Schedule:** every day at **7:00 AM IST** → cron `30 1 * * *` (UTC).
+- **Connect the routine to the private repo** `hardik2015/ace-step-1.5-private`
+  (its `main` is what the kernel clones). `git push origin main` then targets it.
 - The routine needs permission to **push to `main`**. If `main` is branch-protected,
   either allow the routine's identity to push, or move the whole flow to a dedicated
   `daily` branch (update the Action's `paths`/`branches` and the notebook's
@@ -260,6 +278,7 @@ Notes & limits:
 | `invalid_grant` / token refresh fails | Refresh token revoked/expired (a Testing-status OAuth app expires tokens after 7 days). Re-issue it, or set the consent screen to **Production**. |
 | `Set GDRIVE_FOLDER_ID...` | Add the `GDRIVE_FOLDER_ID` Kaggle secret (or set the constant in the notebook). |
 | Action runs but no Kaggle run starts | Check `kaggle/kernel-metadata.json` `id` matches your username; verify `KAGGLE_USERNAME`/`KAGGLE_KEY` secrets. |
+| Kernel fails at `git clone` (`Authentication failed` / `could not read Username`) | Missing/invalid `GITHUB_TOKEN` Kaggle secret, or the PAT lacks Contents-read on `ace-step-1.5-private`, or it expired. Re-issue the fine-grained PAT (step 1b). |
 | Kernel runs but no GPU / out of memory | The kernel's UI Settings lost **T4 ×2**; re-select it (metadata can't set it). |
 | Kernel can't download weights | Internet is OFF in the kernel Settings; turn it ON. |
 | OAuth setup prints "no refresh_token" | Revoke the app at <https://myaccount.google.com/permissions> and re-run the setup script. |

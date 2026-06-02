@@ -51,7 +51,7 @@ NOTEBOOK_CELL_TEMPLATE = r'''# =================================================
 # =============================================================================
 
 # ----- CONFIG (edit these) ---------------------------------------------------
-REPO_URL    = "https://github.com/hardik2015/ACE-Step-1.5.git"
+REPO_URL    = "https://github.com/hardik2015/ace-step-1.5-private.git"  # PRIVATE
 REPO_BRANCH = "main"
 WORK_DIR    = "/kaggle/tmp/ACE-Step-1.5"
 
@@ -193,11 +193,39 @@ if not shutil.which("uv"):
     sh("curl -LsSf https://astral.sh/uv/install.sh | sh", check=False)
 os.environ["PATH"] = "/root/.local/bin:" + os.environ.get("PATH", "")
 
-# 4) Clone / update repo into /kaggle/tmp.
+# 4) Clone / update repo into /kaggle/tmp. The repo is PRIVATE, so the clone
+# authenticates with a GitHub token taken from the Kaggle Secret GITHUB_TOKEN
+# (a fine-grained PAT with read access to the repo). The token is injected into
+# the clone URL but NEVER echoed to the log (we print the token-free REPO_URL,
+# and run git via subprocess so the command line isn't logged).
 os.makedirs(os.path.dirname(WORK_DIR), exist_ok=True)
-if not os.path.isdir(os.path.join(WORK_DIR, ".git")):
-    sh(f"git clone --depth 1 -b {REPO_BRANCH} {REPO_URL} {WORK_DIR}")
+
+
+def _kaggle_secret(name):
+    try:
+        from kaggle_secrets import UserSecretsClient
+        return UserSecretsClient().get_secret(name)
+    except Exception:
+        return os.environ.get(name, "")
+
+
+_gh_token = _kaggle_secret("GITHUB_TOKEN")
+if _gh_token and REPO_URL.startswith("https://github.com/"):
+    CLONE_URL = REPO_URL.replace("https://github.com/",
+                                 f"https://x-access-token:{_gh_token}@github.com/")
 else:
+    if REPO_URL.startswith("https://github.com/"):
+        print("WARNING: no GITHUB_TOKEN secret set; cloning a private repo will fail.")
+    CLONE_URL = REPO_URL
+
+if not os.path.isdir(os.path.join(WORK_DIR, ".git")):
+    print(f"$ git clone --depth 1 -b {REPO_BRANCH} {REPO_URL} {WORK_DIR}  (token redacted)")
+    if subprocess.run(["git", "clone", "--depth", "1", "-b", REPO_BRANCH, CLONE_URL, WORK_DIR],
+                      env=os.environ.copy()).returncode != 0:
+        raise RuntimeError("git clone failed -- check REPO_URL and the GITHUB_TOKEN secret")
+else:
+    subprocess.run(["git", "-C", WORK_DIR, "remote", "set-url", "origin", CLONE_URL],
+                   env=os.environ.copy())
     sh(f"git -C {WORK_DIR} fetch --depth 1 origin {REPO_BRANCH}", check=False)
     sh(f"git -C {WORK_DIR} checkout {REPO_BRANCH}", check=False)
     sh(f"git -C {WORK_DIR} reset --hard origin/{REPO_BRANCH}", check=False)
