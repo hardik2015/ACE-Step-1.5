@@ -5,35 +5,35 @@ commits them to this repo, a **Kaggle 2×T4** kernel generates the song, and the
 finished audio lands in a **Google Drive folder**.
 
 ```
-  Daily 07:00 IST  (cron 30 1 * * *  UTC)
-        │
-        ▼
-  Claude Code Routine  (/schedule, runs in this repo)
+  Daily 07:00 IST   Claude Code Routine  (/schedule, connected to the private repo)
     • uses the acestep-songwriting skill to write lyrics
-    • writes kaggle/songs.json
-    • git commit + push  →  main
+    • writes kaggle/songs.json   • git commit + push → main
         │  (push touches kaggle/songs.json)
         ▼
   GitHub Action  .github/workflows/kaggle-trigger.yml
-    • kaggle kernels push   →  creates a new kernel version AND runs it
+    • kaggle kernels push --accelerator NvidiaTeslaT4
+      → new kernel version, runs on T4×2 (Kaggle's T4 tier = 2 GPUs)
     • secret: KAGGLE_API_TOKEN
         │
         ▼
   Kaggle kernel  (2×T4, internet ON)
-    • git clone PRIVATE repo (main, via GITHUB_TOKEN)
+    • git clone PRIVATE repo (main, via GITHUB_TOKEN)  → gets the new songs.json
     • reads kaggle/songs.json   (INPUT_MODE="file")
-    • acestep-api generates the song(s)
-    • uploads mp3 + manifest.json → Google Drive folder
-    • secrets: GITHUB_TOKEN, GDRIVE_OAUTH_TOKEN, GDRIVE_FOLDER_ID
+    • acestep-api generates 5 takes → score (filter + WER + CLAP) → mark _BEST
+    • uploads mp3s + manifest.json → Google Drive folder
+    • secrets: GITHUB_TOKEN, GDRIVE_OAUTH_TOKEN (or refresh trio), GDRIVE_FOLDER_ID
         │
         ▼
   Your Google Drive folder  ← finished songs appear here daily
 ```
 
-Why the GitHub Action (not the routine) runs `kaggle kernels push`: a `/schedule`
-routine sandbox has no secret store for Kaggle credentials, but it can push to the
-connected repo. Keeping the Kaggle token as a GitHub secret keeps the routine
-simple — it only writes lyrics and commits.
+**Why the `--accelerator NvidiaTeslaT4` flag matters.** The notebook needs **two
+GPUs** (the LM runs on `cuda:1`). Plain `enable_gpu` defaults to a single **P100**,
+where `cuda:1` doesn't exist and the run fails. Kaggle's **T4 tier is the 2×T4
+environment**, so `kaggle kernels push --accelerator NvidiaTeslaT4` runs the kernel
+on **T4×2** — exactly what the dual-GPU notebook needs. The `/schedule` routine
+itself has no Kaggle credentials; it just commits `songs.json`, and the Action
+(holding `KAGGLE_API_TOKEN`) does the push.
 
 ---
 
@@ -108,28 +108,25 @@ the Kaggle kernel needs a token to clone it.
 
 ### 2. Kaggle kernel (one-time UI config)
 
-`kernel-metadata.json` cannot select the T4×2 accelerator or attach secrets — set
-those in the UI once; they persist across every `kaggle kernels push`.
+The kernel must exist (`allinone2015/acestep-daily`). If you haven't created it,
+push it once from a local checkout:
+```bash
+pip install kaggle            # auth via KAGGLE_API_TOKEN or `kaggle auth login`
+# python kaggle/build_notebook.py   # only if you edited the builder
+kaggle kernels push -p kaggle/ --accelerator NvidiaTeslaT4
+```
+Then open the kernel on kaggle.com → **Settings/Add-ons** and add the **Secrets**
+(secrets are UI-only — they can't be set via the push):
+- `GITHUB_TOKEN` — fine-grained PAT from step 1b (clones the private repo)
+- `GDRIVE_FOLDER_ID` — folder id from step 1
+- your Drive refresh-token secret(s): either `GDRIVE_OAUTH_TOKEN` (Method B), or
+  the trio `GDRIVE_REFRESH_TOKEN` + `GDRIVE_CLIENT_ID` + `GDRIVE_CLIENT_SECRET` (Method A)
 
-1. `kaggle/kernel-metadata.json` is already set to `allinone2015/acestep-daily`.
-2. Push the kernel the first time so it exists (the notebook is already committed
-   in `kaggle/`; only rebuild it if you changed `build_notebook.py`):
-   ```bash
-   pip install kaggle            # configure ~/.kaggle/kaggle.json with your token
-   # python kaggle/build_notebook.py   # only if you edited the builder
-   kaggle kernels push -p kaggle/
-   ```
-3. Open the kernel on kaggle.com → **Settings/Add-ons**:
-   - **Accelerator = GPU T4 ×2**
-   - **Internet = ON**
-   - **Secrets →** add:
-     - `GITHUB_TOKEN` — the fine-grained PAT from step 1b (clones the private repo)
-     - `GDRIVE_FOLDER_ID` — folder id from step 1
-     - your refresh-token secret(s) from step 1: either the single
-       `GDRIVE_OAUTH_TOKEN` (Method B), or the three `GDRIVE_REFRESH_TOKEN` +
-       `GDRIVE_CLIENT_ID` + `GDRIVE_CLIENT_SECRET` (Method A).
+The **accelerator (T4×2)** comes from `--accelerator NvidiaTeslaT4` on every push,
+and **Internet** from `enable_internet: true` in `kernel-metadata.json` — you don't
+need to toggle those in the UI.
 
-### 3. GitHub repo secrets (for the trigger Action)
+### 3. GitHub repo secret (for the trigger Action)
 
 On the **private** repo `hardik2015/ace-step-1.5-private` (secrets do **not**
 transfer from the old fork) → **Settings → Secrets and variables → Actions →
@@ -137,7 +134,7 @@ New repository secret**:
 
 | Secret | Value |
 |--------|-------|
-| `KAGGLE_API_TOKEN` | a token from Kaggle → **Settings → API → API Tokens (Recommended)** → create token, copy the value |
+| `KAGGLE_API_TOKEN` | Kaggle → **Settings → API → API Tokens (Recommended)** → create, copy |
 
 ### 4. The Claude routine (`/schedule`)
 
@@ -260,8 +257,9 @@ Notes & limits:
   the binding constraint — keep songs short or skip days if you approach the cap.
 - **Filename.** The kernel notebook is still named `acestep_kaggle_2xT4_weekly.ipynb`
   (historical); it now runs daily.
-- **Identical pushes.** The trigger workflow stamps the UTC time into the kernel
-  title before pushing so Kaggle always creates a fresh, runnable version.
+- **Identical pushes.** The trigger workflow appends a `# run-stamp:` comment to
+  the notebook before pushing, so Kaggle always sees fresh content and creates a
+  new, runnable version (the title is left alone so it keeps matching the slug).
 - **Scoring time.** Whisper + CLAP add ~1–3 min per take on CPU, plus a one-time
   ~2 GB CLAP download per session. For 5 takes that's a few extra minutes per
   run — negligible vs. cold start.
@@ -279,7 +277,7 @@ Notes & limits:
 | Action runs but no Kaggle run starts | Check `kaggle/kernel-metadata.json` `id` matches your username; verify the `KAGGLE_API_TOKEN` secret. |
 | `401 - Unauthorized` on `kaggle kernels push` | `KAGGLE_API_TOKEN` is missing/invalid/expired. Re-create it under Kaggle Settings → API Tokens and update the repo secret. |
 | Kernel fails at `git clone` (`Authentication failed` / `could not read Username`) | Missing/invalid `GITHUB_TOKEN` Kaggle secret, or the PAT lacks Contents-read on `ace-step-1.5-private`, or it expired. Re-issue the fine-grained PAT (step 1b). |
-| Kernel runs but no GPU / out of memory | The kernel's UI Settings lost **T4 ×2**; re-select it (metadata can't set it). |
+| Kernel ran on a single **P100** (no `cuda:1`) and failed | The push didn't request T4×2. Ensure the Action runs `kaggle kernels push … --accelerator NvidiaTeslaT4` (Kaggle's T4 tier = 2 GPUs). |
 | Kernel can't download weights | Internet is OFF in the kernel Settings; turn it ON. |
 | OAuth setup prints "no refresh_token" | Revoke the app at <https://myaccount.google.com/permissions> and re-run the setup script. |
 | Routine commit rejected | `main` is branch-protected; allow the routine to push or switch to a `daily` branch (see setup §4). |
