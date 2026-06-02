@@ -25,22 +25,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Kaggle CLI
-        # Pin the classic CLI: it authenticates from ~/.kaggle/kaggle.json
-        # (username + key). The newer rewritten CLI dropped that for
-        # OAuth / KAGGLE_API_TOKEN and rejects these credentials.
-        run: pip install --quiet "kaggle<1.7"
-
-      - name: Write Kaggle credentials
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-        run: |
-          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
-            echo "::error::Missing repo secrets KAGGLE_USERNAME / KAGGLE_KEY"; exit 1
-          fi
-          mkdir -p ~/.kaggle
-          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
-          chmod 600 ~/.kaggle/kaggle.json
+        run: pip install --quiet kaggle
 
       # The notebook is committed (see .gitignore), so no rebuild is needed --
       # we only bump the title so Kaggle treats each push as a fresh, re-runnable
@@ -58,10 +43,13 @@ jobs:
           PY
 
       - name: Push & run kernel
-        env:                                   # classic CLI also reads these directly
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-        run: kaggle kernels push -p kaggle/
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          if [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "::error::Missing repo secret KAGGLE_API_TOKEN (Kaggle -> Settings -> API Tokens)"; exit 1
+          fi
+          kaggle kernels push -p kaggle/
 
       - name: Where to watch it
         run: echo "Run started. Watch it at https://www.kaggle.com/code (your 'ACE-Step Daily' kernel)."

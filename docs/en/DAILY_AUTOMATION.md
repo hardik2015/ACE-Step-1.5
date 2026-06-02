@@ -16,7 +16,7 @@ finished audio lands in a **Google Drive folder**.
         ▼
   GitHub Action  .github/workflows/kaggle-trigger.yml
     • kaggle kernels push   →  creates a new kernel version AND runs it
-    • secrets: KAGGLE_USERNAME, KAGGLE_KEY
+    • secret: KAGGLE_API_TOKEN
         │
         ▼
   Kaggle kernel  (2×T4, internet ON)
@@ -137,8 +137,7 @@ New repository secret**:
 
 | Secret | Value |
 |--------|-------|
-| `KAGGLE_USERNAME` | your Kaggle username |
-| `KAGGLE_KEY` | the `key` from your Kaggle API token (`kaggle.json`) |
+| `KAGGLE_API_TOKEN` | a token from Kaggle → **Settings → API → API Tokens (Recommended)** → create token, copy the value |
 
 ### 4. The Claude routine (`/schedule`)
 
@@ -277,7 +276,8 @@ Notes & limits:
 | `Drive upload needs Kaggle Secrets...` | No usable auth on the kernel. Add `GDRIVE_OAUTH_TOKEN`, or the trio `GDRIVE_REFRESH_TOKEN`+`GDRIVE_CLIENT_ID`+`GDRIVE_CLIENT_SECRET`. |
 | `invalid_grant` / token refresh fails | Refresh token revoked/expired (a Testing-status OAuth app expires tokens after 7 days). Re-issue it, or set the consent screen to **Production**. |
 | `Set GDRIVE_FOLDER_ID...` | Add the `GDRIVE_FOLDER_ID` Kaggle secret (or set the constant in the notebook). |
-| Action runs but no Kaggle run starts | Check `kaggle/kernel-metadata.json` `id` matches your username; verify `KAGGLE_USERNAME`/`KAGGLE_KEY` secrets. |
+| Action runs but no Kaggle run starts | Check `kaggle/kernel-metadata.json` `id` matches your username; verify the `KAGGLE_API_TOKEN` secret. |
+| `401 - Unauthorized` on `kaggle kernels push` | `KAGGLE_API_TOKEN` is missing/invalid/expired. Re-create it under Kaggle Settings → API Tokens and update the repo secret. |
 | Kernel fails at `git clone` (`Authentication failed` / `could not read Username`) | Missing/invalid `GITHUB_TOKEN` Kaggle secret, or the PAT lacks Contents-read on `ace-step-1.5-private`, or it expired. Re-issue the fine-grained PAT (step 1b). |
 | Kernel runs but no GPU / out of memory | The kernel's UI Settings lost **T4 ×2**; re-select it (metadata can't set it). |
 | Kernel can't download weights | Internet is OFF in the kernel Settings; turn it ON. |
