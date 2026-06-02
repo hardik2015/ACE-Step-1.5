@@ -39,11 +39,9 @@ jobs:
           printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
 
-      # kaggle/*.ipynb is gitignored (generated from build_notebook.py), so a
-      # fresh checkout has no notebook -- regenerate it before pushing.
-      - name: Regenerate kernel notebook
-        run: python kaggle/build_notebook.py
-
+      # The notebook is committed (see .gitignore), so no rebuild is needed --
+      # we only bump the title so Kaggle treats each push as a fresh, re-runnable
+      # version.
       - name: Stamp run time into kernel title (forces a fresh version)
         run: |
           python - <<'PY'

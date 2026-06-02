@@ -42,7 +42,7 @@ simple — it only writes lyrics and commits.
 | File | Role |
 |------|------|
 | `kaggle/build_notebook.py` | Generates the single-cell kernel notebook. Defaults are now `INPUT_MODE="file"`, `OUTPUT_MODE="gdrive"`. |
-| `kaggle/acestep_kaggle_2xT4_weekly.ipynb` | The generated kernel — **gitignored**; rebuilt from `build_notebook.py` (locally and by the trigger Action) before each push. |
+| `kaggle/acestep_kaggle_2xT4_weekly.ipynb` | The kernel notebook — **committed** to the repo. It's generated from `build_notebook.py`; if you edit the builder, run it and commit the regenerated `.ipynb`. |
 | `kaggle/songs.json` | **The daily artifact.** The routine overwrites this; the kernel reads it. |
 | `kaggle/songs.example.json` | Schema documentation (not read by the kernel). |
 | `kaggle/kernel-metadata.json` | Required by `kaggle kernels push`. Put your Kaggle username in `id`. |
@@ -100,10 +100,11 @@ method below. Both first require an OAuth client:
 those in the UI once; they persist across every `kaggle kernels push`.
 
 1. Edit `kaggle/kernel-metadata.json`: set `"id": "<your-kaggle-username>/acestep-daily"`.
-2. Generate the notebook and push the kernel the first time so it exists:
+2. Push the kernel the first time so it exists (the notebook is already committed
+   in `kaggle/`; only rebuild it if you changed `build_notebook.py`):
    ```bash
    pip install kaggle            # configure ~/.kaggle/kaggle.json with your token
-   python kaggle/build_notebook.py   # the .ipynb is gitignored — generate it first
+   # python kaggle/build_notebook.py   # only if you edited the builder
    kaggle kernels push -p kaggle/
    ```
 3. Open the kernel on kaggle.com → **Settings/Add-ons**:
