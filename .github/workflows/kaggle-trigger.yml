@@ -1,15 +1,14 @@
-name: Kaggle trigger
+name: Kaggle deploy (manual only)
 
-# Fires when the daily routine commits new lyrics. Pushes the kernel to Kaggle
-# with --accelerator NvidiaTeslaT4 (Kaggle's T4 tier IS the 2xT4 environment),
-# so it runs on T4x2 -- which the 2-GPU notebook (LM on cuda:1) needs. The push
-# creates a new version AND runs it -> that run is the trigger.
+# IMPORTANT: this is NOT the daily trigger. `kaggle kernels push` UNLINKS the
+# kernel's attached Secrets every time (known Kaggle API behavior), so a pushed
+# run can't read GITHUB_TOKEN / GDRIVE_* -> clone + upload fail. The daily run is
+# Kaggle's built-in SCHEDULER, which re-runs the UI-configured version (T4x2 +
+# internet + attached secrets). Use this ONLY to re-deploy notebook CODE changes,
+# and AFTER running it re-open Add-ons -> Secrets in the UI and press Done to
+# re-attach the secrets.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "kaggle/songs.json"
-  workflow_dispatch: {}   # manual "Run workflow" button
+  workflow_dispatch: {}
 
 # Avoid overlapping kernel runs if several commits land close together.
 concurrency:
