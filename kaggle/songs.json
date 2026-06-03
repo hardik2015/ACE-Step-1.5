@@ -1,7 +1,13 @@
 {
-  "title": "Neon Monsoon (नीयन मानसून)",
-  "prompt": "Hindi lo-fi ghazal-fusion at 72 BPM: warm fingerpicked nylon guitar, brushed dub bass, a distant analog synth pad sighing like rain on glass, soft tabla rolls and rim-click percussion, a single melancholic sarangi answering the vocal lines. Intimate late-night mood, rain-soaked and nostalgic, smoky low energy. A breathy, aching male voice — close-mic'd, half-whispered with delicate harmonized backing in the chorus.",
-  "lyrics": "[verse]\nखिड़की पे टपकती है पुरानी सी कोई बात\nनीयन की रोशनी में भीगी हुई ये रात\nचाय ठंडी हो गई, घड़ी रुकी हुई\nतेरी याद आज फिर दरवाज़े पे खड़ी हुई\n\n[pre-chorus]\nधीरे धीरे, धुएँ की तरह\nतू बिखरती है मेरे कमरे में हर जगह\n\n[chorus]\nनीयन मानसून, बरस जा मुझ पे ज़रा\nहर बूँद में तेरा नाम, हर मोड़ पे तेरा पता\nभीगता रहूँ मैं, ना थमे ये सिलसिला\nनीयन मानसून, ले चल वहाँ जहाँ तू था\n\n[verse]\nगलियाँ सुनसान हैं, बस लैम्प की थकान\nपानी में काँपता है टूटा हुआ आसमान\nमैं गिनता हूँ कदम जो कभी साथ चले\nअब अकेले लौटते हैं, बारिश में ढले\n\n[bridge]\nना शिकवा, ना गिला, बस इतना सा कहूँ\nजहाँ तू छोड़ गई, मैं वहीं अब भी रुकूँ\nये शहर सो गया, बस मैं और तेरी कमी\nऔर ये नीयन मानसून, मेरी आधी ज़िंदगी\n\n[chorus]\nनीयन मानसून, बरस जा मुझ पे ज़रा\nहर बूँद में तेरा नाम, हर मोड़ पे तेरा पता\nभीगता रहूँ मैं, ना थमे ये सिलसिला\nनीयन मानसून, ले चल वहाँ जहाँ तू था\n\n[outro]\nबरस... बरस जा\nनीयन मानसून, धीरे से थम जा",
+  "title": "Saawan Tu Mera",
+  "prompt": "Hindi lo-fi indie-fusion with mellow tabla groove, soft bansuri, warm harmonium and round sub bass over dusty tape-textured pads, nostalgic and bittersweet, intimate bedroom production with subtle vinyl crackle, tender breathy male vocals close-miked, warm vintage timbre",
+  "lyrics": "[Intro]\n(barishon ki yaad)\ndheere dheere shaam dhale\n\n[Verse]\nkhidki pe boondein gire\npurani baatein yaad aaye\nchai ki bhaap mein khoye\ntere chehre ko main paaye\n\n[Pre-Chorus]\n[building energy]\nhar pal thehra sa lage\nwaqt yahin ruk jaaye\n\n[Chorus]\nsaawan tu mera, main teri ghata\nbheegi si raaton mein tu hi mila\nsaawan tu mera, main teri ghata\nyaadon ki khushboo dil mein basa\n\n[Verse 2]\npurani chitthi padhi\ntere lafzon mein kho gaya\nwoh galiyan ab bhi wahi\npar main thoda badal gaya\n\n[Bridge]\n[melancholic]\nchhup chhup ke baadal roye\nmeri in aankhon ki tarah\nbeet gaya jo woh pal\nlaut aaye phir DOBARA\n\n[Flute Interlude]\n\n[Outro]\n(dheere dheere)\nsaawan tu mera\n(main teri ghata)",
   "vocal_language": "hindi",
+  "bpm": 82,
+  "key_scale": "E Minor",
+  "time_signature": "4/4",
+  "audio_duration": 195,
+  "inference_steps": 50,
+  "guidance_scale": 7.0,
   "versions": 1
 }
