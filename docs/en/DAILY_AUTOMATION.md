@@ -178,12 +178,24 @@ objects, or `{"songs": [ ... ]}`. Required: `prompt` (caption) and `lyrics`.
 ```json
 {
   "title": "Tera Sheher",
-  "prompt": "modern Bollywood pop, romantic duet, lush strings, tabla groove, cinematic",
-  "lyrics": "[verse]\n...\n[chorus]\n...\n",
-  "vocal_language": "unknown",
-  "versions": 5
+  "prompt": "modern Bollywood pop with dholak groove, soft bansuri and lush strings, romantic and cinematic, polished studio production, tender male-female duet vocals, warm lush timbre",
+  "lyrics": "[Intro]\n...\n[Verse]\n...\n[Chorus]\n...\n[Outro]\n",
+  "vocal_language": "hindi",
+  "bpm": 95,
+  "key_scale": "C Major",
+  "time_signature": "4/4",
+  "audio_duration": 200,
+  "versions": 1
 }
 ```
+
+> **The caption (`prompt`) is ~70% of output quality.** Make it multi-dimensional
+> (genre · 3-4 instruments · mood · production · vocal style · timbre), not a
+> generic line — a thin caption is what makes songs sound generic/over-lyrical.
+> The daily routine targets a **Bollywood/Hindi-primary hybrid** (≈3 Indian : 1
+> global-English) for distribution reach, favouring modern fusion + mid-tempo and
+> capping `audio_duration` ≈180-210s (ACE-Step vocals are coarse on nuance-heavy
+> classical, and genre can drift past ~2 min).
 
 `versions` (default 1) renders N alternate takes of the *same* song: the kernel
 submits it N times on the already-loaded model with random seeds, so each take

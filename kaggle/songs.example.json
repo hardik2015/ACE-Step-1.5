@@ -2,7 +2,7 @@
   "_README": "Schema for kaggle/songs.json -- the daily song spec the Kaggle kernel reads (INPUT_MODE='file'). The Claude routine OVERWRITES kaggle/songs.json each morning. This .example file is documentation only and is NOT read by the kernel. A day may be a single object (below), a bare list of objects, or {\"songs\": [ ... ]} for multiple songs.",
 
   "title":          "Human-readable title; used only to name the output files.",
-  "prompt":         "REQUIRED. The caption/style description (genre, instruments, mood, vocals). Alias: 'caption'. This is the single most important field.",
+  "prompt":         "REQUIRED. The caption -- ~70% of output quality. Make it MULTI-DIMENSIONAL: genre, 3-4 instruments, mood, production style, vocal characteristics, timbre (e.g. 'modern Bollywood pop with dholak groove, soft bansuri, lush strings, romantic and cinematic, polished studio production, tender male-female duet vocals, warm lush timbre'). Alias: 'caption'. Do NOT put BPM/key in here -- use the metadata fields below.",
   "lyrics":         "REQUIRED. Structured lyrics with section tags, e.g. [verse]...\\n[chorus]...  Use \\n for line breaks.",
   "vocal_language": "Language hint, or 'unknown' to auto-detect from the lyrics.",
   "versions":       "Optional int (default 1). N alternate takes of THIS song, generated sequentially with random seeds on the same loaded model. Files are suffixed _v01.._vNN. Cold start is paid once, so extra versions cost only generation time.",
