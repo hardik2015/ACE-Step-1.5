@@ -160,7 +160,9 @@ JOB_TIMEOUT_S       = 60 * 60           # per-song wall clock budget
 # requested STYLE). The two are min-max normalised per song and blended by the
 # weights below. The winner is renamed with a _BEST suffix. Best-effort: any
 # failure here just skips ranking, it never drops a generated file.
-SCORE_VERSIONS = True
+SCORE_VERSIONS = False    # OFF: skip Whisper lyric-WER + CLAP rating entirely
+                          # (with versions=1 there is nothing to rank; also avoids
+                          # the Whisper/CLAP downloads + slow CPU inference).
 WHISPER_MODEL  = "base"   # "base" fast | "small"/"medium" more accurate (multilingual)
 WHISPER_DEVICE = "cpu"    # CPU avoids VRAM contention with the still-running API server
 SCORE_CLAP     = True     # add CLAP style-match scoring
