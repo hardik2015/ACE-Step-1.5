@@ -1,7 +1,7 @@
 {
-  "title": "Tera Sheher",
-  "prompt": "modern Bollywood pop, romantic duet male and female vocals, lush strings, tabla and dholak groove, soft flute, cinematic and emotional, danceable mid-tempo",
-  "lyrics": "[verse]\nSham dhale teri yaadein chali aayi\nTere bina yeh duniya soti nahi\nEvery street feels like a song we used to know\n[chorus]\nTera sheher teri galiyan\nTere naam ki yeh raahein\nHold me close tonight\nRoshni ban ke aaja zindagi mein\n",
-  "vocal_language": "unknown",
+  "title": "Neon Monsoon (नीयन मानसून)",
+  "prompt": "Hindi lo-fi ghazal-fusion at 72 BPM: warm fingerpicked nylon guitar, brushed dub bass, a distant analog synth pad sighing like rain on glass, soft tabla rolls and rim-click percussion, a single melancholic sarangi answering the vocal lines. Intimate late-night mood, rain-soaked and nostalgic, smoky low energy. A breathy, aching male voice — close-mic'd, half-whispered with delicate harmonized backing in the chorus.",
+  "lyrics": "[verse]\nखिड़की पे टपकती है पुरानी सी कोई बात\nनीयन की रोशनी में भीगी हुई ये रात\nचाय ठंडी हो गई, घड़ी रुकी हुई\nतेरी याद आज फिर दरवाज़े पे खड़ी हुई\n\n[pre-chorus]\nधीरे धीरे, धुएँ की तरह\nतू बिखरती है मेरे कमरे में हर जगह\n\n[chorus]\nनीयन मानसून, बरस जा मुझ पे ज़रा\nहर बूँद में तेरा नाम, हर मोड़ पे तेरा पता\nभीगता रहूँ मैं, ना थमे ये सिलसिला\nनीयन मानसून, ले चल वहाँ जहाँ तू था\n\n[verse]\nगलियाँ सुनसान हैं, बस लैम्प की थकान\nपानी में काँपता है टूटा हुआ आसमान\nमैं गिनता हूँ कदम जो कभी साथ चले\nअब अकेले लौटते हैं, बारिश में ढले\n\n[bridge]\nना शिकवा, ना गिला, बस इतना सा कहूँ\nजहाँ तू छोड़ गई, मैं वहीं अब भी रुकूँ\nये शहर सो गया, बस मैं और तेरी कमी\nऔर ये नीयन मानसून, मेरी आधी ज़िंदगी\n\n[chorus]\nनीयन मानसून, बरस जा मुझ पे ज़रा\nहर बूँद में तेरा नाम, हर मोड़ पे तेरा पता\nभीगता रहूँ मैं, ना थमे ये सिलसिला\nनीयन मानसून, ले चल वहाँ जहाँ तू था\n\n[outro]\nबरस... बरस जा\nनीयन मानसून, धीरे से थम जा",
+  "vocal_language": "hindi",
   "versions": 1
 }
