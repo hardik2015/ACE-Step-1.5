@@ -1,0 +1,74 @@
+# TEMPLATE -- this is NOT an active workflow here. It is stored outside
+# .github/workflows/ on purpose so it does not run in this repo.
+#
+# Copy this file into the SONG repo (herry20152016/song-repo) at
+#   .github/workflows/forward-to-main.yml
+# and add the secret MAIN_REPO_PAT (a PAT with "Contents: read & write" on the
+# MAIN repo) there.
+# ---------------------------------------------------------------------------
+name: Forward song to main repo
+
+# Lives in the SONG repo. When the daily routine commits a new kaggle/songs.json
+# here, this copies it into the MAIN repo's kaggle/songs.json via the GitHub
+# Contents API. That PAT-authored commit fires the MAIN repo's kaggle-trigger.yml,
+# and the Kaggle kernel reads the fresh song.
+#
+# Required secret in the SONG repo:
+#   MAIN_REPO_PAT - a PAT with "Contents: read & write" on the MAIN repo only.
+
+on:
+  push:
+    paths:
+      - "kaggle/songs.json"
+  workflow_dispatch: {}
+
+concurrency:
+  group: forward-to-main
+  cancel-in-progress: false
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this (song) repo
+        uses: actions/checkout@v4
+
+      - name: Copy songs.json into the main repo (triggers its Kaggle render)
+        env:
+          PAT: ${{ secrets.MAIN_REPO_PAT }}
+          MAIN_REPO: hardik2015/ace-step-1.5-private    # <-- change to your main repo
+          MAIN_BRANCH: main
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${MAIN_REPO}/contents/kaggle/songs.json"
+
+          # Current SHA of the file in the main repo (empty if it does not exist yet)
+          SHA=$(curl -sS -H "Authorization: Bearer ${PAT}" \
+                     -H "Accept: application/vnd.github+json" \
+                     "${API}?ref=${MAIN_BRANCH}" \
+                | python3 -c 'import sys,json; print(json.load(sys.stdin).get("sha",""))' 2>/dev/null || true)
+
+          # Build the Contents API payload (base64 of the new songs.json)
+          python3 - "${SHA}" "${MAIN_BRANCH}" > payload.json <<'PY'
+          import base64, json, sys
+          sha, branch = sys.argv[1], sys.argv[2]
+          content = base64.b64encode(open("kaggle/songs.json", "rb").read()).decode()
+          body = {
+              "message": "sync songs.json from song-repo",
+              "content": content,
+              "branch": branch,
+          }
+          if sha:
+              body["sha"] = sha
+          print(json.dumps(body))
+          PY
+
+          # Commit it to the main repo -> fires its kaggle-trigger.yml
+          code=$(curl -sS -o resp.json -w "%{http_code}" -X PUT \
+                   -H "Authorization: Bearer ${PAT}" \
+                   -H "Accept: application/vnd.github+json" \
+                   -H "X-GitHub-Api-Version: 2022-11-28" \
+                   "${API}" -d @payload.json)
+          echo "HTTP ${code}"
+          cat resp.json
+          test "${code}" = "200" -o "${code}" = "201"
