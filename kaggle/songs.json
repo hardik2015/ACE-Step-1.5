@@ -1,7 +1,13 @@
 {
-  "title": "Tera Sheher",
-  "prompt": "modern Bollywood pop, romantic duet male and female vocals, lush strings, tabla and dholak groove, soft flute, cinematic and emotional, danceable mid-tempo",
-  "lyrics": "[verse]\nSham dhale teri yaadein chali aayi\nTere bina yeh duniya soti nahi\nEvery street feels like a song we used to know\n[chorus]\nTera sheher teri galiyan\nTere naam ki yeh raahein\nHold me close tonight\nRoshni ban ke aaja zindagi mein\n",
-  "vocal_language": "unknown",
-  "versions": 1
+  "title": "Khoyi Hawa",
+  "prompt": "Indie-fusion with breathy bansuri, plaintive sarangi, crisp modern mid-tempo beats and warm round bass, wistful and wandering yet quietly hopeful, airy organic production with spacious natural reverb, warm expressive male Hindi vocal answered by soft female harmonies, mellow earthy timbre",
+  "lyrics": "[Intro]\n[Flute Interlude]\n\n[Verse]\nSubah ki halki si dhoop\nMere kandhe pe ruk gayi\nRaahein khuli si lage\nDil phir se chal pada\n\n[Pre-Chorus]\n[building energy]\nHawa kuch keh rahi\nKadam halke se uth rahe\n\n[Chorus]\nChalta jaaun main hawaon ke saath\nKhoyi si raah, naye se khwaab\nDoor kahin ek roshni\nBula rahi mujhe, aa idhar\n(aa idhar)\n\n[Verse 2]\nMitti ki khushboo mein\nBeete pal ghul gaye\nSarangi si pukaar\nSeene mein bas gayi\n\n[Bridge]\n[harmonies]\nNa manzil ki fikar\nNa waqt ka pata\nBas yeh safar, bas yeh hawa\nHAR SAANS MEIN NAYA SAVERA\n\n[Flute Interlude]\n\n[Outro]\nChalta jaaun, hawaon ke saath\n(hawaon ke saath)",
+  "vocal_language": "hi",
+  "bpm": 102,
+  "key_scale": "D Major",
+  "time_signature": "4/4",
+  "audio_duration": 195,
+  "inference_steps": 50,
+  "guidance_scale": 7.0,
+  "versions": 5
 }
