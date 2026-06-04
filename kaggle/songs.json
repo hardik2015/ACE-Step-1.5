@@ -1,13 +1,13 @@
 {
-  "title": "Dhurandhar Deewaniyat",
-  "prompt": "Modern Bollywood commercial film track, aggressive electronic synth bass with heavy 808 sub drops, punchy urban dholak and Punjabi hip-hop hybrid dance beats, high-energy rhythm section mixed with cinematic orchestral strings and acoustic guitar strums, explosive and catchy melodic hooks, featuring powerful female Punjabi vocals and soulful, expressive male playback singing with crisp modern pop audio production, maximum volume density",
-  "lyrics": "[Intro]\n(Upbeat electronic synth melody building up with a heavy dhol loop)\n\n[Verse 1]\n[Male Vocals]\n(Soulful, expressive playback style like Arijit Singh)\nTeri raahon mein khoya rahoon,\nDil ki baatein main tujhse kahoon.\n\n[Pre-Chorus]\n[Duet]\n(Cinematic strings swell, building intense energy and rhythm)\nWaqt ki dhool mein khona nahi,\nAb toh humein juda hona nahi.\n\n[Chorus]\n[Drop, Explosive full commercial arrangement]\n[Female Vocals]\n(High-energy, punchy vocals like Jasmine Sandlas, heavy bass drops)\nMera dil vi tu, meri jaan vi tu,\nAb jeena hai tere bin kyun!\nMera dil vi tu, meri jaan vi tu,\nAb jeena hai tere bin kyun!\n\n[Verse 2]\n[Female Vocals]\n(Sassy, energetic Punjabi delivery over modern hip-hop groove)\nAankhon mein teri hai naya asar,\nHum chal pade hain udhar jidhar.\n\n[Pre-Chorus]\n[Duet]\n(Cinematic strings swell, building intense energy and rhythm)\nWaqt ki dhool mein khona nahi,\nAb toh humein juda hona nahi.\n\n[Chorus]\n[Drop, Explosive full commercial arrangement]\n[Female Vocals]\n(High-energy, punchy vocals like Jasmine Sandlas, heavy bass drops)\nMera dil vi tu, meri jaan vi tu,\nAb jeena hai tere bin kyun!\n\n[Bridge]\n[Dhol and Guitar Solo]\n(Massive breakdown with traditional dhol beats and modern synth leads)\nTum mere na huye toh kya,\nKhwaab toh dekhoon sanam.\n\n[Outro]\n[High Energy]\n(Fading electronic beat mixed with energetic vocal chants)\nMera dil vi tu, meri jaan vi tu...\nAb jeena hai tere bin kyun! (Fade out)",
-  "vocal_language": "hindi",
-  "bpm": 118,
-  "key_scale": "D Minor",
+  "title": "Saanson Ki Dhun",
+  "prompt": "Indie-fusion folk-pop with breathy bansuri, mournful sarangi, warm round sub bass and crisp downtempo beats, wistful and quietly hopeful, airy modern production with organic acoustic texture, tender expressive male Hindi vocal with soft female harmonies, warm reverb-washed timbre",
+  "lyrics": "[Intro]\n(softly)\nHawa mein teri sadaa\nDoor kahin ek raah\n\n[Verse]\nSubah ki pehli kiran\nDhoondhe tujhe har gali\nSaanson mein basi hai dhun\nJaise koi bansuri\n\n[Pre-Chorus]\n[building energy]\nKadam mere chalte rahe\nManzil abhi door sahi\n\n[Chorus]\nSaanson ki dhun gungunaa\nRaahon mein tu mil jaana\nDoor kahin ujaala hai\nDil ko wahi le jaana\n(le jaana, le jaana)\n\n[Verse 2]\nShaamein dhalein chupke se\nTaaron mein likhun main tu\nSarangi si tadap uthe\nJab bhi yaad aaye tu\n\n[Bridge]\n[harmonies]\nTU HAI MERI RAAH KI ROSHNI\nHar mod pe teri hi kami\n\n[Bansuri Interlude]\n\n[Outro]\n(softly)\nSaanson ki dhun reh jaana\nDoor se bhi tu sun jaana",
+  "vocal_language": "hi",
+  "bpm": 104,
+  "key_scale": "E Minor",
   "time_signature": "4/4",
-  "audio_duration": 180,
+  "audio_duration": 196,
   "inference_steps": 50,
-  "guidance_scale": 7.5,
+  "guidance_scale": 7.0,
   "versions": 5
 }
