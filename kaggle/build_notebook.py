@@ -63,6 +63,7 @@ for _k, _v in {
     "GDRIVE_REFRESH_TOKEN": "__GDRIVE_REFRESH_TOKEN__",
     "GDRIVE_CLIENT_ID":     "__GDRIVE_CLIENT_ID__",
     "GDRIVE_CLIENT_SECRET": "__GDRIVE_CLIENT_SECRET__",
+    "PIXABAY_API_KEY":      "__PIXABAY_API_KEY__",
 }.items():
     if _v and not (_v.startswith("__") and _v.endswith("__")):
         _os.environ[_k] = _v
@@ -170,6 +171,28 @@ CLAP_MODEL     = "laion/larger_clap_music_and_speech"   # music+vocals CLAP chec
 CLAP_DEVICE    = "cpu"
 W_LYRIC        = 0.6      # blend weights for the final score (lyric clarity ...
 W_CLAP         = 0.4      # ... vs. style match). Only used when CLAP is active.
+
+# Music-video rendering (stream #2 only). build_notebook2.py patches MAKE_VIDEO
+# to True; stream #1 keeps False so its behavior is unchanged. For each song the
+# notebook searches Pixabay VIDEOS for song["pixabay_query"] (fallback: first
+# comma-segment of the caption), downloads enough clips to cover the song,
+# normalizes + loops them with ffmpeg (NVENC on the T4 when available), burns
+# line-level lyrics as ASS subtitles (lines spread across the vocal window that
+# a tiny Whisper pass detects), and muxes the song audio -> <take>_MV.mp4 next
+# to the audio file, uploaded to Drive with it. Needs the PIXABAY_API_KEY
+# secret (free key: https://pixabay.com/api/docs/); without it (or with zero
+# Pixabay hits) a plain dark canvas + lyrics is rendered instead, so a video is
+# always produced. Best-effort like scoring: failure skips the video, never the
+# audio. NOTE: lyrics rendering assumes romanized (Hinglish) lyrics -- the
+# default DejaVu Sans font has no Devanagari glyphs.
+MAKE_VIDEO      = False                  # patched to True by build_notebook2.py
+VIDEO_RES       = (1920, 1080)           # output WxH (clips scaled+cropped to fit)
+VIDEO_FPS       = 30
+VIDEO_MAX_CLIPS = 12                     # cap on distinct Pixabay clips per song
+VIDEO_CLIP_SECS = 20                     # each clip trimmed to at most this long
+VIDEO_WORK      = "/kaggle/tmp/video_work"
+VIDEO_LYRICS    = True                   # burn lyrics overlay into the video
+WHISPER_VAD     = "tiny"                 # tiny Whisper just to find the vocal window
 
 # ----- IMPLEMENTATION --------------------------------------------------------
 import os, sys, json, time, shutil, subprocess, pathlib, datetime
@@ -352,7 +375,8 @@ def _build_request_body(song):
     }
     body = dict(GEN_DEFAULTS)
     for k, v in song.items():
-        if k in ("title", "versions"):   # local-only keys, not GenerateMusicRequest fields
+        # local-only keys, not GenerateMusicRequest fields
+        if k in ("title", "versions", "pixabay_query", "video_query"):
             continue
         body[aliases.get(k, k)] = v
     return body
@@ -657,6 +681,237 @@ if SCORE_VERSIONS:
     except Exception as exc:
         print(f"[score] scoring skipped ({type(exc).__name__}: {exc})")
 
+# 9.7) Music video (stream #2): Pixabay footage + lyrics overlay + song audio.
+# Entirely best-effort: any per-song failure records an error in the manifest
+# and moves on, so the audio upload below is never blocked.
+if MAKE_VIDEO:
+    import math
+
+    _PIXABAY_KEY = _kaggle_secret("PIXABAY_API_KEY")
+
+    def _ffrun(args, desc):
+        print(f"[video] $ {' '.join(args[:12])}{' ...' if len(args) > 12 else ''}")
+        r = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            tail = r.stderr.decode(errors="replace")[-2000:]
+            raise RuntimeError(f"{desc} failed (exit {r.returncode}):\n{tail}")
+
+    def _ffprobe_duration(path):
+        out = subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path], text=True).strip()
+        return float(out)
+
+    def _video_encoder():
+        """Prefer the T4's NVENC; fall back to x264 veryfast. Being listed in
+        -encoders does not guarantee NVENC works (ffmpeg build vs driver), so
+        prove it with a tiny test encode before trusting it."""
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-v", "error", "-f", "lavfi",
+                 "-i", "color=c=black:s=128x128:d=0.1",
+                 "-c:v", "h264_nvenc", "-f", "null", "-"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if r.returncode == 0:
+                print("[video] encoder: h264_nvenc (T4)")
+                return ["-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "8M"]
+        except Exception:
+            pass
+        print("[video] encoder: libx264 veryfast")
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21"]
+
+    def _pixabay_clips(query, need_s):
+        """Search Pixabay videos; return [(mp4_url, duration_s)] covering ~need_s."""
+        if not _PIXABAY_KEY:
+            print("[video] no PIXABAY_API_KEY secret -- using plain background")
+            return []
+        params = urllib.parse.urlencode({
+            "key": _PIXABAY_KEY, "q": query[:100],   # Pixabay rejects q > 100 chars
+            "per_page": 50,
+            "safesearch": "true", "video_type": "all"})
+        try:
+            with urllib.request.urlopen(
+                    f"https://pixabay.com/api/videos/?{params}", timeout=60) as r:
+                hits = json.loads(r.read().decode("utf-8")).get("hits") or []
+        except Exception as exc:
+            print(f"[video] pixabay search failed ({type(exc).__name__}: {exc})")
+            return []
+        picked, covered = [], 0.0
+        for h in hits:
+            v = h.get("videos") or {}
+            # A rendition that doesn't exist is still present as {"url": "", ...}
+            # (documented for "large"), so pick the first variant that actually
+            # carries a usable URL instead of trusting dict truthiness.
+            best = next((v[k] for k in ("large", "medium", "small", "tiny")
+                         if (v.get(k) or {}).get("url")), None)
+            dur = float(h.get("duration") or 0)
+            if not best or dur < 3:
+                continue
+            picked.append((best["url"], dur))
+            covered += min(dur, VIDEO_CLIP_SECS)
+            if covered >= need_s * 1.2 or len(picked) >= VIDEO_MAX_CLIPS:
+                break
+        print(f"[video] pixabay {query!r}: {len(hits)} hits -> "
+              f"{len(picked)} clips (~{int(covered)}s of footage)")
+        return picked
+
+    def _vocal_window(audio_path, dur):
+        """(start, end) of the sung part via a tiny Whisper pass; safe margins
+        on any failure. Line-level lyrics are spread across this window."""
+        try:
+            try:
+                import whisper
+            except ImportError:
+                sh(f"{sys.executable} -m pip install -q openai-whisper")
+                import whisper
+            wm = whisper.load_model(WHISPER_VAD, device="cpu")
+            segs = wm.transcribe(whisper.load_audio(audio_path), fp16=False)["segments"]
+            if segs:
+                s = max(0.0, float(segs[0]["start"]) - 0.5)
+                e = min(dur, float(segs[-1]["end"]) + 0.5)
+                if e - s > 10:
+                    return (s, e)
+        except Exception as exc:
+            print(f"[video] whisper window failed ({type(exc).__name__}: {exc}); "
+                  f"using default margins")
+        return (dur * 0.10, dur * 0.95)
+
+    def _lyric_events(lyrics, window):
+        """[(start, end, line)]: known lyric lines spread proportionally (by
+        length) across the vocal window. Approximate sync by design -- exact
+        word alignment on sung Hinglish vocals is not reliable enough."""
+        lines = [l.strip() for l in re.sub(r"\[[^\]]*\]", "\n", lyrics or "").splitlines()]
+        lines = [l for l in lines if l]
+        if not lines or not window:
+            return []
+        s, e = window
+        weights = [max(len(l), 8) for l in lines]
+        span, total = e - s, float(sum(weights))
+        events, t = [], s
+        for line, w in zip(lines, weights):
+            d = span * w / total
+            events.append((t, min(t + d, e), line))
+            t += d
+        return events
+
+    def _ass_time(t):
+        # Round to centiseconds FIRST, then split -- splitting before rounding
+        # can emit an invalid "0:00:60.00" just below a minute boundary.
+        cs = int(round(t * 100))
+        h, cs = divmod(cs, 360000)
+        m, cs = divmod(cs, 6000)
+        s, cs = divmod(cs, 100)
+        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+    def _write_ass(path, events, title):
+        W, H = VIDEO_RES
+        head = (
+            "[Script Info]\nScriptType: v4.00+\n"
+            f"PlayResX: {W}\nPlayResY: {H}\nWrapStyle: 2\n\n"
+            "[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, "
+            "BackColour, Bold, Italic, Alignment, MarginL, MarginR, MarginV, "
+            "Outline, Shadow, BorderStyle, Encoding\n"
+            f"Style: Lyric,DejaVu Sans,{int(H * 0.055)},&H00FFFFFF,&H00101010,"
+            f"&H64000000,1,0,2,60,60,{int(H * 0.06)},3,1,1,1\n"
+            f"Style: Title,DejaVu Sans,{int(H * 0.085)},&H00FFFFFF,&H00101010,"
+            "&H64000000,1,0,5,60,60,60,4,2,1,1\n\n"
+            "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
+            "MarginV, Effect, Text\n")
+        out = [head]
+        if title:
+            t = title.replace("{", "(").replace("}", ")")   # same guard as lyrics
+            out.append(f"Dialogue: 0,{_ass_time(0.8)},{_ass_time(5.5)},Title,,0,0,0,,"
+                       f"{{\\fad(400,400)}}{t}\n")
+        for s, e, txt in events:
+            txt = txt.replace("{", "(").replace("}", ")")
+            out.append(f"Dialogue: 0,{_ass_time(s)},{_ass_time(e)},Lyric,,0,0,0,,"
+                       f"{{\\fad(200,200)}}{txt}\n")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("".join(out))
+
+    def _make_video(audio_path, song, idx):
+        work = os.path.join(VIDEO_WORK, f"song{idx:03d}")
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work)
+        W, H = VIDEO_RES
+        dur = _ffprobe_duration(audio_path)
+        enc = _video_encoder()
+
+        query = (song.get("pixabay_query") or song.get("video_query") or
+                 (song.get("prompt") or song.get("caption") or "").split(",")[0]).strip()
+        clips = _pixabay_clips(query, dur) if query else []
+
+        # Normalize each clip to a uniform mpegts segment (scale+crop, fps, mute).
+        segs = []
+        for ci, (url, _cdur) in enumerate(clips):
+            try:
+                src = os.path.join(work, f"clip{ci:02d}.mp4")
+                with urllib.request.urlopen(url, timeout=180) as r, open(src, "wb") as f:
+                    shutil.copyfileobj(r, f)
+                seg = os.path.join(work, f"seg{ci:02d}.ts")
+                _ffrun(["ffmpeg", "-y", "-v", "error", "-i", src,
+                        "-t", str(VIDEO_CLIP_SECS),
+                        "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                               f"crop={W}:{H},fps={VIDEO_FPS},format=yuv420p",
+                        "-an"] + enc + ["-f", "mpegts", seg], f"normalize clip {ci}")
+                segs.append(seg)
+                os.remove(src)
+            except Exception as exc:
+                print(f"[video] clip {ci} skipped ({type(exc).__name__}: {exc})")
+
+        # Background: looped concat of the segments, or a plain dark canvas.
+        bg = os.path.join(work, "bg.ts")
+        if segs:
+            seg_total = sum(_ffprobe_duration(s) for s in segs)
+            repeats = max(1, math.ceil(dur / max(seg_total, 1.0)))
+            lst = os.path.join(work, "concat.txt")
+            with open(lst, "w") as f:
+                for _ in range(repeats):
+                    for s in segs:
+                        f.write(f"file '{s}'\n")
+            _ffrun(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                    "-i", lst, "-c", "copy", "-t", f"{dur + 2:.2f}", bg], "concat")
+        else:
+            _ffrun(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                    "-i", f"color=c=0x14141e:s={W}x{H}:r={VIDEO_FPS}:d={dur + 2:.2f}",
+                    "-vf", "format=yuv420p"] + enc + ["-f", "mpegts", bg], "canvas")
+
+        # Lyrics overlay (burned-in ASS subtitles), then mux the song audio.
+        vf = []
+        if VIDEO_LYRICS:
+            events = _lyric_events(song.get("lyrics", ""), _vocal_window(audio_path, dur))
+            ass = os.path.join(work, "lyrics.ass")
+            _write_ass(ass, events, song.get("title") or "")
+            vf = ["-vf", f"subtitles={ass}"]
+        out_mp4 = str(pathlib.Path(audio_path).with_suffix("")) + "_MV.mp4"
+        _ffrun(["ffmpeg", "-y", "-v", "error", "-i", bg, "-i", audio_path] + vf +
+               ["-t", f"{dur:.2f}", "-map", "0:v", "-map", "1:a"] + enc +
+               ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out_mp4],
+               "final mux")
+        shutil.rmtree(work, ignore_errors=True)
+        print(f"[video] -> {out_mp4} ({os.path.getsize(out_mp4) // (1024 * 1024)} MB)")
+        return {"path": out_mp4, "query": query, "clips": len(segs),
+                "lyrics": bool(vf), "duration_s": round(dur, 1)}
+
+    print(f"\n[video] rendering music video(s); res={VIDEO_RES}, fps={VIDEO_FPS}")
+    for m in manifest:
+        song = songs[m["index"] - 1] if 0 <= m["index"] - 1 < len(songs) else {}
+        target = m.get("best_path")
+        if not target:
+            for ver in m.get("versions", []):
+                if ver.get("paths"):
+                    target = ver["paths"][0]
+                    break
+        if not target or not os.path.exists(target):
+            print(f"[video] no audio for {m['title']!r}; skipping")
+            continue
+        try:
+            m["video"] = _make_video(target, song, m["index"])
+        except Exception as exc:
+            print(f"[video] FAILED for {m['title']!r} ({type(exc).__name__}: {exc})")
+            m["video"] = {"error": f"{type(exc).__name__}: {exc}"}
+
 # Manifest
 with open(os.path.join(LOCAL_OUT, "manifest.json"), "w", encoding="utf-8") as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
@@ -730,10 +985,10 @@ if OUTPUT_MODE == "gdrive":
         print("[drive] auth: service account (Shared Drive)")
     svc = build("drive", "v3", credentials=creds, cache_discovery=False)
 
-    AUDIO_EXTS = {".mp3", ".wav", ".flac", ".opus", ".aac"}
+    UPLOAD_EXTS = {".mp3", ".wav", ".flac", ".opus", ".aac", ".mp4"}  # audio + rendered MVs
     uploaded = 0
     for p in pathlib.Path(LOCAL_OUT).rglob("*"):
-        if p.is_file() and (p.suffix.lower() in AUDIO_EXTS or p.name == "manifest.json"):
+        if p.is_file() and (p.suffix.lower() in UPLOAD_EXTS or p.name == "manifest.json"):
             meta = {"name": p.name, "parents": [folder]}
             res = svc.files().create(
                 body=meta,

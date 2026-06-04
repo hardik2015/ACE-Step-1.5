@@ -1,0 +1,104 @@
+name: "Kaggle daily run #2 (inject secrets, run on T4x2, purge)"
+
+# Second song stream: generates the song AND renders a music video on the same
+# Kaggle box (Pixabay stock footage + burned lyrics; MAKE_VIDEO=True), then
+# uploads MP3 + MP4 to Drive. Differences from kaggle-trigger.yml:
+#   stream #1: kaggle/songs.json  -> build_notebook.py  -> allinone2015/acestep-daily
+#   stream #2: kaggle/songs2.json -> build_notebook2.py -> allinone2015/acestep-daily-2
+#
+# kaggle/songs2.json lands here as a PAT-authored Contents-API commit (from the
+# daily routine chain):
+#   PUT /repos/hardik2015/ace-step-1.5-private/contents/kaggle/songs2.json
+#   Authorization: Bearer <PAT with "Contents: read & write" on this repo>
+#   body: {"message": "...", "content": <base64 songs2.json>, "branch": "main",
+#          "sha": <current file sha, fetched first; omit on first create>}
+# A PAT-authored commit fires this workflow (the default GITHUB_TOKEN would
+# not), which:
+#   1. regenerates notebook #2 (placeholders)
+#   2. replaces each __NAME__ placeholder with the real value from a GitHub repo
+#      secret (safely repr-encoded; never echoed)
+#   3. kaggle kernels push --accelerator NvidiaTeslaT4  (creates + runs on T4x2)
+# Then this workflow EXITS -- the Kaggle run finishes on its own (~30-60 min
+# with the video render). kaggle-cleanup.yml deletes BOTH kernels later to
+# purge the injected secrets.
+#
+# Uses the same repo secrets as kaggle-trigger.yml: KAGGLE_API_TOKEN,
+# MAIN_GITHUB_TOKEN, GDRIVE_FOLDER_ID, and GDRIVE_OAUTH_TOKEN *or* the trio
+# GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET.
+# New for the video stage: PIXABAY_API_KEY (free key from
+# https://pixabay.com/api/docs/ -- without it the video falls back to a plain
+# background, the run still succeeds).
+# Optional: set GDRIVE_FOLDER_ID_2 to upload stream #2 into a different Drive
+# folder; it falls back to GDRIVE_FOLDER_ID when unset.
+on:
+  push:
+    branches: [main]
+    paths: ["kaggle/songs2.json"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: kaggle-daily-run-2
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install --quiet kaggle
+
+      - name: Regenerate notebook 2 (placeholders)
+        run: python kaggle/build_notebook2.py
+
+      - name: Replace placeholders with real secrets (no echo)
+        env:
+          MAIN_GITHUB_TOKEN: ${{ secrets.MAIN_GITHUB_TOKEN }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID_2 || secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os
+          p = "kaggle/notebook2/acestep_kaggle_2xT4_daily2.ipynb"
+          nb = json.load(open(p, encoding="utf-8"))
+          src = nb["cells"][0]["source"]
+          if isinstance(src, list):
+              src = "".join(src)
+          mapping = {
+              "__GITHUB_TOKEN__":         os.environ.get("MAIN_GITHUB_TOKEN", ""),
+              "__GDRIVE_FOLDER_ID__":     os.environ.get("GDRIVE_FOLDER_ID", ""),
+              "__GDRIVE_OAUTH_TOKEN__":   os.environ.get("GDRIVE_OAUTH_TOKEN", ""),
+              "__GDRIVE_REFRESH_TOKEN__": os.environ.get("GDRIVE_REFRESH_TOKEN", ""),
+              "__GDRIVE_CLIENT_ID__":     os.environ.get("GDRIVE_CLIENT_ID", ""),
+              "__GDRIVE_CLIENT_SECRET__": os.environ.get("GDRIVE_CLIENT_SECRET", ""),
+              "__PIXABAY_API_KEY__":      os.environ.get("PIXABAY_API_KEY", ""),
+          }
+          n = 0
+          for ph, val in mapping.items():
+              tok = '"%s"' % ph                       # the placeholder as written: "__NAME__"
+              if val and tok in src:
+                  src = src.replace(tok, repr(val))   # repr -> safe Python string literal
+                  n += 1
+          nb["cells"][0]["source"] = src
+          json.dump(nb, open(p, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+          print("replaced %d placeholder(s)" % n)
+          if not os.environ.get("MAIN_GITHUB_TOKEN"):
+              print("::warning::MAIN_GITHUB_TOKEN is empty -- the private-repo clone will fail")
+          PY
+
+      - name: Push & run on T4x2
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          if [ -z "$KAGGLE_API_TOKEN" ]; then echo "::error::Missing KAGGLE_API_TOKEN"; exit 1; fi
+          out=$(kaggle kernels push -p kaggle/notebook2/ --accelerator NvidiaTeslaT4 2>&1) || true
+          echo "$out"
+          echo "$out" | grep -qi "successfully pushed" || { echo "::error::kaggle push failed"; exit 1; }
+          echo "Pushed & running. The Kaggle run finishes on its own; kaggle-cleanup.yml purges it later."

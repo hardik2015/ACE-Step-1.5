@@ -1,0 +1,13 @@
+{
+  "id": "allinone2015/acestep-daily-2",
+  "title": "Acestep Daily 2",
+  "code_file": "acestep_kaggle_2xT4_daily2.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}
