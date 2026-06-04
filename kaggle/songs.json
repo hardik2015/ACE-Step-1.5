@@ -1,12 +1,12 @@
 {
-  "title": "Saanson Ki Dhun",
-  "prompt": "Indie-fusion folk-pop with breathy bansuri, mournful sarangi, warm round sub bass and crisp downtempo beats, wistful and quietly hopeful, airy modern production with organic acoustic texture, tender expressive male Hindi vocal with soft female harmonies, warm reverb-washed timbre",
-  "lyrics": "[Intro]\n(softly)\nHawa mein teri sadaa\nDoor kahin ek raah\n\n[Verse]\nSubah ki pehli kiran\nDhoondhe tujhe har gali\nSaanson mein basi hai dhun\nJaise koi bansuri\n\n[Pre-Chorus]\n[building energy]\nKadam mere chalte rahe\nManzil abhi door sahi\n\n[Chorus]\nSaanson ki dhun gungunaa\nRaahon mein tu mil jaana\nDoor kahin ujaala hai\nDil ko wahi le jaana\n(le jaana, le jaana)\n\n[Verse 2]\nShaamein dhalein chupke se\nTaaron mein likhun main tu\nSarangi si tadap uthe\nJab bhi yaad aaye tu\n\n[Bridge]\n[harmonies]\nTU HAI MERI RAAH KI ROSHNI\nHar mod pe teri hi kami\n\n[Bansuri Interlude]\n\n[Outro]\n(softly)\nSaanson ki dhun reh jaana\nDoor se bhi tu sun jaana",
+  "title": "Khoyi Hawa",
+  "prompt": "Indie-fusion with breathy bansuri, plaintive sarangi, crisp modern mid-tempo beats and warm round bass, wistful and wandering yet quietly hopeful, airy organic production with spacious natural reverb, warm expressive male Hindi vocal answered by soft female harmonies, mellow earthy timbre",
+  "lyrics": "[Intro]\n[Flute Interlude]\n\n[Verse]\nSubah ki halki si dhoop\nMere kandhe pe ruk gayi\nRaahein khuli si lage\nDil phir se chal pada\n\n[Pre-Chorus]\n[building energy]\nHawa kuch keh rahi\nKadam halke se uth rahe\n\n[Chorus]\nChalta jaaun main hawaon ke saath\nKhoyi si raah, naye se khwaab\nDoor kahin ek roshni\nBula rahi mujhe, aa idhar\n(aa idhar)\n\n[Verse 2]\nMitti ki khushboo mein\nBeete pal ghul gaye\nSarangi si pukaar\nSeene mein bas gayi\n\n[Bridge]\n[harmonies]\nNa manzil ki fikar\nNa waqt ka pata\nBas yeh safar, bas yeh hawa\nHAR SAANS MEIN NAYA SAVERA\n\n[Flute Interlude]\n\n[Outro]\nChalta jaaun, hawaon ke saath\n(hawaon ke saath)",
   "vocal_language": "hi",
-  "bpm": 104,
-  "key_scale": "E Minor",
+  "bpm": 102,
+  "key_scale": "D Major",
   "time_signature": "4/4",
-  "audio_duration": 196,
+  "audio_duration": 195,
   "inference_steps": 50,
   "guidance_scale": 7.0,
   "versions": 5
