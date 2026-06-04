@@ -1,13 +1,13 @@
 {
-  "title": "Dhalti Shaam",
-  "prompt": "Hindi lo-fi indie-fusion with mellow tabla groove, warm Rhodes piano, fingerpicked acoustic guitar and round sub bass, nostalgic and tender, vinyl-warm low-fidelity production, soft intimate male vocals with airy double-tracked harmonies, hazy analog timbre",
-  "lyrics": "[Intro]\n[melancholic]\n(humming soft)\n\n[Verse]\nDhalti shaam ki gali mein\nTeri yaadein ghar bana gayi\nChai ka dhuaan, purani baat\nDil ke kone tak sama gayi\n\n[Pre-Chorus]\nDheere dheere sab badal gaya\nPar tu wahi, tu wahi raha\n\n[Chorus]\n[harmonies]\nYaadon ki lo-fi dhun baja\nTu meri shaam ka ujala\nKhoya sa main, tujhe dhoondta\nTu hi mera ghar, tu hi rasta\n\n[Verse 2]\nKhidki se aati thandi hawa\nTere naam ki khushboo liye\nPurana gaana, dheema sa\nAankhon mein sapne so gaye\n\n[Pre-Chorus]\nDheere dheere sab badal gaya\nPar tu wahi, tu wahi raha\n\n[Chorus]\n[harmonies]\nYaadon ki lo-fi dhun baja\nTu meri shaam ka ujala\nKhoya sa main, tujhe dhoondta\nTu hi mera ghar, tu hi rasta\n\n[Bridge]\n[Guitar Solo]\nWaqt ki dhool mein\nTasveer dhundli si\nPar dil abhi bhi\nTujhe hi dhadakta\n\n[Outro]\n(tu hi rasta...)\nDheere se kho gaya",
+  "title": "Dhurandhar Deewaniyat",
+  "prompt": "Modern Bollywood commercial film track, aggressive electronic synth bass with heavy 808 sub drops, punchy urban dholak and Punjabi hip-hop hybrid dance beats, high-energy rhythm section mixed with cinematic orchestral strings and acoustic guitar strums, explosive and catchy melodic hooks, featuring powerful female Punjabi vocals and soulful, expressive male playback singing with crisp modern pop audio production, maximum volume density",
+  "lyrics": "[Intro]\n(Upbeat electronic synth melody building up with a heavy dhol loop)\n\n[Verse 1]\n[Male Vocals]\n(Soulful, expressive playback style like Arijit Singh)\nTeri raahon mein khoya rahoon,\nDil ki baatein main tujhse kahoon.\n\n[Pre-Chorus]\n[Duet]\n(Cinematic strings swell, building intense energy and rhythm)\nWaqt ki dhool mein khona nahi,\nAb toh humein juda hona nahi.\n\n[Chorus]\n[Drop, Explosive full commercial arrangement]\n[Female Vocals]\n(High-energy, punchy vocals like Jasmine Sandlas, heavy bass drops)\nMera dil vi tu, meri jaan vi tu,\nAb jeena hai tere bin kyun!\nMera dil vi tu, meri jaan vi tu,\nAb jeena hai tere bin kyun!\n\n[Verse 2]\n[Female Vocals]\n(Sassy, energetic Punjabi delivery over modern hip-hop groove)\nAankhon mein teri hai naya asar,\nHum chal pade hain udhar jidhar.\n\n[Pre-Chorus]\n[Duet]\n(Cinematic strings swell, building intense energy and rhythm)\nWaqt ki dhool mein khona nahi,\nAb toh humein juda hona nahi.\n\n[Chorus]\n[Drop, Explosive full commercial arrangement]\n[Female Vocals]\n(High-energy, punchy vocals like Jasmine Sandlas, heavy bass drops)\nMera dil vi tu, meri jaan vi tu,\nAb jeena hai tere bin kyun!\n\n[Bridge]\n[Dhol and Guitar Solo]\n(Massive breakdown with traditional dhol beats and modern synth leads)\nTum mere na huye toh kya,\nKhwaab toh dekhoon sanam.\n\n[Outro]\n[High Energy]\n(Fading electronic beat mixed with energetic vocal chants)\nMera dil vi tu, meri jaan vi tu...\nAb jeena hai tere bin kyun! (Fade out)",
   "vocal_language": "hindi",
-  "bpm": 84,
-  "key_scale": "A Minor",
+  "bpm": 118,
+  "key_scale": "D Minor",
   "time_signature": "4/4",
-  "audio_duration": 195,
+  "audio_duration": 180,
   "inference_steps": 50,
-  "guidance_scale": 7.0,
-  "versions": 1
+  "guidance_scale": 7.5,
+  "versions": 5
 }
