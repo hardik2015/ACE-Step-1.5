@@ -1,12 +1,12 @@
 {
-  "title": "Hold The Night",
-  "prompt": "Soulful Amapiano-Afrohouse groove with rolling log drums, warm soulful piano riffs, deep sub bass and shimmering shakers, hypnotic and uplifting, spacious club-ready production, smooth expressive male lead with airy female background harmonies, warm velvety timbre",
-  "lyrics": "[Intro]\n(oh, oh) feel the low end roll\nsoft light across the floor\n\n[Verse]\nCity hums a slow blue tune\nFootsteps chasing down the moon\nWe move easy, nothing planned\nYour hand resting in my hand\n\n[Pre-Chorus]\nAnd the bass is calling out my name\n[building energy]\nNothing here will feel the same\n\n[Chorus]\n[euphoric]\nHold the night, don't let it go (don't let it go)\nLet the piano take it slow\nWe are rivers in the glow\nHOLD THE NIGHT, don't let it go\n\n[Verse 2]\nShakers whisper in the dark\nEvery heartbeat leaves a spark\nSpin me till the morning breaks\nLose the weight the daylight makes\n\n[Pre-Chorus]\nAnd the bass is calling out my name\n[building energy]\nNothing here will feel the same\n\n[Chorus]\n[euphoric]\nHold the night, don't let it go (don't let it go)\nLet the piano take it slow\nWe are rivers in the glow\nHOLD THE NIGHT, don't let it go\n\n[Piano Interlude]\n\n[Bridge]\n[harmonies]\nSlow it down, slow it down (slow it down)\nLet the log drums hold the ground\nEvery wave will bring me round\nHere with you I'm finally found\n\n[Outro]\n(oh, oh) hold the night\n(oh, oh) in the light",
+  "title": "The Wobbly Little Penguin",
+  "prompt": "Upbeat cheerful children's song, bouncy acoustic guitar, playful glockenspiel, light energetic drums, happy and whimsical, bright clear production, enthusiastic female lead vocalist with a warm and friendly tone, accompanied by a joyful kids choir on the chorus",
+  "lyrics": "[Intro]\n(Waddle waddle!)\n(Step, step! Let's go!)\n\n[Verse 1]\nI know a little bird who loves the snow\nHe doesn't fly up high, he stays down low\nWith a black and white suit, he looks so neat\nWobbly wobbly walks on his two orange feet!\n\n[Pre-Chorus]\nOh, look at him go, left and right\n[building energy]\nSuch a very silly sight!\n\n[Chorus]\n[joyful kids choir joins]\nWaddle waddle waddle, slide on the ice!\nBeing a penguin is really quite nice!\nFlap your little flippers, one, two, three!\nWobbly little penguin, dance with me!\n\n[Verse 2]\nWhen the wind gets cold, he doesn't mind\nHe huddles with his friends, close behind\nAnd when it's time to swim, he dives right in\nSplishy splashy water on his penguin skin!\n\n[Pre-Chorus]\nOh, look at him go, left and right\n[building energy]\nSuch a very silly sight!\n\n[Chorus]\n[joyful kids choir joins]\nWaddle waddle waddle, slide on the ice!\nBeing a penguin is really quite nice!\nFlap your little flippers, one, two, three!\nWobbly little penguin, dance with me!\n\n[Instrumental Interlude]\n[Playful glockenspiel solo]\n\n[Bridge]\n[clapping beat only]\nSlide, slide, on your tummy! (wheee!)\nCatch a little fish, oh so yummy! (yum!)\nUp, down, spin around\nMake a little happy penguin sound! (Honk! Honk!)\n\n[Chorus]\n[maximum energy]\nWaddle waddle waddle, slide on the ice!\nBeing a penguin is really quite nice!\nFlap your little flippers, one, two, three!\nWobbly little penguin, dance with me!\n\n[Outro]\nWaddle, waddle... \n(giggles)\nBye bye, penguin!",
   "vocal_language": "en",
-  "bpm": 120,
-  "key_scale": "G Major",
+  "bpm": 115,
+  "key_scale": "C Major",
   "time_signature": "4/4",
-  "audio_duration": 198,
+  "audio_duration": 150,
   "inference_steps": 50,
   "guidance_scale": 7.0,
   "versions": 5
