@@ -2,41 +2,88 @@
 # .github/workflows/ on purpose so it does not run in this repo.
 #
 # Copy this file into the SONG repo (herry20152016/song-repo) at
-#   .github/workflows/forward-to-main.yml
-# and add the secret MAIN_REPO_PAT (a PAT with "Contents: read & write" on the
-# MAIN repo) there.
+#   .github/workflows/main.yml
+# and add the secrets listed below there.
 # ---------------------------------------------------------------------------
-name: Forward song specs to main repo
+name: Song spec pipeline
 
-# Lives in the SONG repo. When the daily routine commits a new song spec here,
-# this copies it into the MAIN repo via the GitHub Contents API. The
-# PAT-authored commit fires the MAIN repo's matching trigger, and the Kaggle
-# kernel reads the fresh song:
-#   kaggle/songs.json -> fires kaggle-trigger.yml
-# Files identical to the main repo's copy are skipped, so re-runs and unrelated
-# pushes never fire a spurious Kaggle render.
+# Lives in the SONG repo -- ONE workflow for both spec files; each step runs
+# only when its file changed in the push:
 #
-# Required secret in the SONG repo:
-#   MAIN_REPO_PAT - a PAT with "Contents: read & write" on the MAIN repo only.
+#   kaggle/songs.json changed:
+#     1. copy it into the MAIN repo via the GitHub Contents API (skipped when
+#        identical -> no spurious render). The PAT-authored commit fires the
+#        MAIN repo's kaggle-trigger.yml and the Kaggle kernel reads the song.
+#     2. archive the spec to a history repo as <YYYY-MM-DD_HHMM IST>_<title>.json:
+#          "category": "kids" in songs.json -> herry20152016/kids-songs-history
+#          otherwise                        -> herry20152016/songs-history
+#
+#   kaggle/kidssong.json changed:
+#     3. call the Vercel search API with its search_query/title (kids video).
+#
+# workflow_dispatch re-runs the forward; pass search_query to also fire the
+# video search.
+#
+# Required secrets in the SONG repo:
+#   MAIN_REPO_PAT    - PAT with "Contents: read & write" on the MAIN repo only.
+#   HISTORY_REPO_PAT - PAT with "Contents: read & write" on the two history
+#                      repos. Unset -> archiving is skipped with a warning,
+#                      forwarding still works.
+#   VERCEL_API_KEY, VERCEL_APP_URL - for the kids video search call.
 
 on:
   push:
     paths:
       - "kaggle/songs.json"
-  workflow_dispatch: {}
+      - "kaggle/kidssong.json"
+  workflow_dispatch:
+    inputs:
+      search_query:
+        description: Also fire the kids video search with this query
+        required: false
+      title:
+        description: Song title for the video search
+        required: false
 
 concurrency:
-  group: forward-to-main
+  group: song-spec-pipeline
   cancel-in-progress: false
 
 jobs:
-  forward:
+  run:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout this (song) repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Copy changed song specs into the main repo (fires its Kaggle triggers)
+      - name: Detect which spec files changed
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          DISPATCH_QUERY: ${{ github.event.inputs.search_query }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            # The routine commits one file per push; BEFORE..AFTER covers
+            # multi-commit pushes, HEAD^ is the fallback for forced/first pushes.
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null \
+                      || git diff --name-only HEAD^ HEAD 2>/dev/null || echo kaggle/songs.json)
+            echo "$CHANGED" | grep -qx "kaggle/songs.json"    && SONGS=true || SONGS=false
+            echo "$CHANGED" | grep -qx "kaggle/kidssong.json" && KIDS=true  || KIDS=false
+          else
+            SONGS=true                                  # manual re-forward
+            [ -n "$DISPATCH_QUERY" ] && KIDS=true || KIDS=false
+          fi
+          echo "songs=$SONGS" >> "$GITHUB_OUTPUT"
+          echo "kids=$KIDS"   >> "$GITHUB_OUTPUT"
+          echo "changed: songs=$SONGS kids=$KIDS"
+
+      - name: Copy songs.json into the main repo (fires its Kaggle trigger)
+        id: fwd
+        if: steps.changed.outputs.songs == 'true'
         env:
           PAT: ${{ secrets.MAIN_REPO_PAT }}
           MAIN_REPO: hardik2015/ace-step-1.5-private    # <-- change to your main repo
@@ -67,6 +114,7 @@ jobs:
                       return e.code, {}
 
           failed = False
+          forwarded = False
           for path in ("kaggle/songs.json",):
               if not os.path.exists(path):
                   print(f"-- {path}: not in this repo, skipping")
@@ -94,8 +142,106 @@ jobs:
               code, resp = req(api, json.dumps(body).encode(), "PUT")
               commit = (resp.get("commit") or {}).get("sha", "")
               print(f"-- {path}: HTTP {code} {commit}")
-              if code not in (200, 201):
+              if code in (200, 201):
+                  forwarded = True
+              else:
                   print(json.dumps(resp)[:500])
                   failed = True
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"forwarded={'true' if forwarded else 'false'}\n")
           sys.exit(1 if failed else 0)
           PY
+
+      - name: Archive song spec to history repo (datetime + title)
+        if: steps.fwd.outputs.forwarded == 'true'
+        env:
+          HISTORY_PAT: ${{ secrets.HISTORY_REPO_PAT }}
+          KIDS_REPO: herry20152016/kids-songs-history
+          SONGS_REPO: herry20152016/songs-history
+        run: |
+          python3 - <<'PY'
+          import base64, datetime, json, os, sys, urllib.error, urllib.parse, urllib.request
+
+          PAT = os.environ.get("HISTORY_PAT", "")
+          if not PAT:
+              print("::warning::HISTORY_REPO_PAT not set -- skipping history archive")
+              sys.exit(0)
+          HDRS = {
+              "Authorization": f"Bearer {PAT}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "Content-Type": "application/json",
+          }
+
+          def req(url, data=None, method="GET"):
+              r = urllib.request.Request(url, data=data, headers=HDRS, method=method)
+              try:
+                  with urllib.request.urlopen(r, timeout=60) as resp:
+                      return resp.status, json.loads(resp.read().decode() or "{}")
+              except urllib.error.HTTPError as e:
+                  try:
+                      return e.code, json.loads(e.read().decode() or "{}")
+                  except Exception:
+                      return e.code, {}
+
+          raw = open("kaggle/songs.json", "rb").read()
+          try:
+              data = json.loads(raw.decode("utf-8"))
+          except Exception as exc:
+              print(f"::warning::songs.json unparseable ({exc}) -- archiving as untitled")
+              data = {}
+
+          # Same shapes the Kaggle notebook accepts: object, {"songs":[...]}, list.
+          if isinstance(data, dict):
+              category = str(data.get("category") or "").strip().lower()
+              songs = data.get("songs")
+              first = songs[0] if (isinstance(songs, list) and songs) else data
+          elif isinstance(data, list) and data:
+              category, first = "", data[0]
+          else:
+              category, first = "", {}
+          title = str((first or {}).get("title") or "untitled")[:80]
+          safe = "".join("_" if (c in '\\/:*?"<>|' or ord(c) < 32) else c
+                         for c in title).strip(" ._") or "untitled"
+
+          repo = os.environ["KIDS_REPO"] if category == "kids" else os.environ["SONGS_REPO"]
+          ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+          name = f"{ist.strftime('%Y-%m-%d_%H%M')}_{safe}.json"
+          api = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(name)}"
+
+          # Update-in-place if the same minute+title already exists (re-runs).
+          code, remote = req(api)
+          body = {"message": f"archive {name}",
+                  "content": base64.b64encode(raw).decode()}
+          if code == 200 and remote.get("sha"):
+              body["sha"] = remote["sha"]
+          code, resp = req(api, json.dumps(body).encode(), "PUT")
+          print(f"-- {repo}/{name}: HTTP {code}")
+          if code not in (200, 201):
+              print(json.dumps(resp)[:500])
+              sys.exit(1)
+          PY
+
+      - name: Read kids video search query
+        id: read
+        if: steps.changed.outputs.kids == 'true'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            SEARCH_QUERY=$(jq -r '.search_query' kaggle/kidssong.json)
+            TITLE=$(jq -r '.title // ""' kaggle/kidssong.json)
+          else
+            SEARCH_QUERY="${{ github.event.inputs.search_query }}"
+            TITLE="${{ github.event.inputs.title }}"
+          fi
+          echo "SEARCH_QUERY=$SEARCH_QUERY" >> $GITHUB_OUTPUT
+          echo "TITLE=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Call Vercel API to start kids video search
+        if: steps.changed.outputs.kids == 'true'
+        env:
+          VERCEL_API_KEY: ${{ secrets.VERCEL_API_KEY }}
+        run: |
+          curl -X POST "${{ secrets.VERCEL_APP_URL }}/api/trigger-search" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $VERCEL_API_KEY" \
+            -d "{\"query\":\"${{ steps.read.outputs.SEARCH_QUERY }}\",\"title\":\"${{ steps.read.outputs.TITLE }}\"}"
