@@ -1,12 +1,12 @@
 {
-  "title": "Khoyi Hawa",
-  "prompt": "Indie-fusion with breathy bansuri, plaintive sarangi, crisp modern mid-tempo beats and warm round bass, wistful and wandering yet quietly hopeful, airy organic production with spacious natural reverb, warm expressive male Hindi vocal answered by soft female harmonies, mellow earthy timbre",
-  "lyrics": "[Intro]\n[Flute Interlude]\n\n[Verse]\nSubah ki halki si dhoop\nMere kandhe pe ruk gayi\nRaahein khuli si lage\nDil phir se chal pada\n\n[Pre-Chorus]\n[building energy]\nHawa kuch keh rahi\nKadam halke se uth rahe\n\n[Chorus]\nChalta jaaun main hawaon ke saath\nKhoyi si raah, naye se khwaab\nDoor kahin ek roshni\nBula rahi mujhe, aa idhar\n(aa idhar)\n\n[Verse 2]\nMitti ki khushboo mein\nBeete pal ghul gaye\nSarangi si pukaar\nSeene mein bas gayi\n\n[Bridge]\n[harmonies]\nNa manzil ki fikar\nNa waqt ka pata\nBas yeh safar, bas yeh hawa\nHAR SAANS MEIN NAYA SAVERA\n\n[Flute Interlude]\n\n[Outro]\nChalta jaaun, hawaon ke saath\n(hawaon ke saath)",
+  "title": "Dheemi Si Yaad",
+  "prompt": "Hindi lo-fi Indian R&B-soul ballad with mellow tabla, fingerpicked acoustic guitar, warm sub bass and soft analog pads, tender and aching with late-night longing, intimate tape-warm bedroom production, warm expressive male playback vocal with breathy falsetto, hazy velvety timbre",
+  "lyrics": "[Intro]\n(hmm... hmm...)\nRaat dhali, tu yaad aayi\n\n[Verse]\nKhidki pe baarish ki boond\nKamra mera sunsaan sa\nChai bhi thandi ho gayi\nDil dhoonde tera pata\n\n[Pre-Chorus]\nPhone ki roshni jaagi\nNaam tera ek baar\n\n[Chorus]\nDheemi si yaad jaise dhuaan (harmonies)\nHaule se mujhe jala gayi\nThehri hui har ek saans\nTeri kami yahaan reh gayi\n\n[Verse 2]\nGaliyon mein woh hansi teri\nDeewaron pe likhi hui\nNeend bhi mujhse rooth gayi\nRaaton ko kar bekhabar\n\n[Bridge]\n[falsetto]\nLautega kya tu phir kabhi\nYa SIRF ek sapna bani\nMain intezaar ki nadi (ad-lib)\nBehti rahungi har ghadi\n\n[Outro]\n[melancholic]\nDheemi si yaad... reh gayi\n(reh gayi... reh gayi...)\n",
   "vocal_language": "hi",
-  "bpm": 102,
-  "key_scale": "D Major",
+  "bpm": 76,
+  "key_scale": "E Minor",
   "time_signature": "4/4",
-  "audio_duration": 195,
+  "audio_duration": 192,
   "inference_steps": 50,
   "guidance_scale": 7.0,
   "versions": 5
