@@ -1,12 +1,12 @@
 {
-  "title": "Saanson Mein Tu",
-  "prompt": "Modern Bollywood romantic pop ballad with lush cinematic strings, tender piano, fingerpicked acoustic guitar and a light dholak groove, yearning and tender yet quietly hopeful, polished radio-ready production, warm expressive male playback vocal with soft female harmonies, velvety intimate timbre",
-  "lyrics": "[Intro]\n(Haan...) dheere se tu aa\nSaanson ko chhoo ja\n\n[Verse]\nRaaton ki khamoshi mein\nTeri baat goonjti hai\nHar ek tanha lamhe mein\nTeri yaad dhoondhti hai\n\n[Pre-Chorus]\n[building energy]\nJab tu paas aata hai\nWaqt thehar sa jaata hai\n\n[Chorus]\nTu hi woh chaaon hai dhoop mein\nTu hi sukoon hai is rooh mein\nTere bina ye din adhoore\nTujhse hi poore, TUJHSE HI POORE\n\n[Verse 2]\nBaadal jab barse aankhon se\nTu hi to chhata ban jaata\nAndhere raaste pe mere\nTu chand bankar muskuraata\n\n[Instrumental]\n\n[Bridge]\n[harmonies]\n(Thaam le haath mera)\nNa chhode kabhi yeh saath\n(Reh ja tu sang mere)\nHar subah aur har raat\n\n[Outro]\nTu hi woh chaaon hai...\nSaanson mein tu... (dheere se)",
+  "title": "Dheemi Si Yaad",
+  "prompt": "Hindi lo-fi Indian R&B-soul ballad with mellow tabla, fingerpicked acoustic guitar, warm sub bass and soft analog pads, tender and aching with late-night longing, intimate tape-warm bedroom production, warm expressive male playback vocal with breathy falsetto, hazy velvety timbre",
+  "lyrics": "[Intro]\n(hmm... hmm...)\nRaat dhali, tu yaad aayi\n\n[Verse]\nKhidki pe baarish ki boond\nKamra mera sunsaan sa\nChai bhi thandi ho gayi\nDil dhoonde tera pata\n\n[Pre-Chorus]\nPhone ki roshni jaagi\nNaam tera ek baar\n\n[Chorus]\nDheemi si yaad jaise dhuaan (harmonies)\nHaule se mujhe jala gayi\nThehri hui har ek saans\nTeri kami yahaan reh gayi\n\n[Verse 2]\nGaliyon mein woh hansi teri\nDeewaron pe likhi hui\nNeend bhi mujhse rooth gayi\nRaaton ko kar bekhabar\n\n[Bridge]\n[falsetto]\nLautega kya tu phir kabhi\nYa SIRF ek sapna bani\nMain intezaar ki nadi (ad-lib)\nBehti rahungi har ghadi\n\n[Outro]\n[melancholic]\nDheemi si yaad... reh gayi\n(reh gayi... reh gayi...)\n",
   "vocal_language": "hi",
-  "bpm": 102,
-  "key_scale": "G Major",
+  "bpm": 76,
+  "key_scale": "E Minor",
   "time_signature": "4/4",
-  "audio_duration": 198,
+  "audio_duration": 192,
   "inference_steps": 50,
   "guidance_scale": 7.0,
   "versions": 5
