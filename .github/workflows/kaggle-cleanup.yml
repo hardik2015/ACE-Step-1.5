@@ -1,11 +1,11 @@
 name: Kaggle cleanup (delete kernel to purge injected secrets)
 
-# kaggle-trigger.yml / kaggle-trigger-2.yml bake secret values into the pushed
-# notebooks, so they sit in the (private) Kaggle kernels until purged. This
-# workflow deletes BOTH kernels a few hours after the daily runs -- once each has
-# finished on its own -- so the secrets don't persist. The next daily push
-# recreates a deleted kernel (confirmed). If a run is still in progress, that
-# kernel is skipped so the run can't be killed.
+# kaggle-trigger.yml bakes secret values into the pushed notebook, so they sit
+# in the (private) Kaggle kernel until purged. This workflow deletes the kernel
+# a few hours after the daily run -- once it has finished on its own -- so the
+# secrets don't persist. The next daily push recreates a deleted kernel
+# (confirmed). If a run is still in progress, the kernel is skipped so the run
+# can't be killed.
 on:
   schedule:
     - cron: "30 5 * * *"     # ~11:00 IST -- well after the ~07:00 IST generation finishes
@@ -25,7 +25,7 @@ jobs:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           if [ -z "$KAGGLE_API_TOKEN" ]; then echo "::error::Missing KAGGLE_API_TOKEN"; exit 1; fi
-          for K in allinone2015/acestep-daily allinone2015/acestep-daily-2; do
+          for K in allinone2015/acestep-daily; do
             s=$(kaggle kernels status "$K" 2>&1); echo "$K: $s"
             if echo "$s" | grep -qiE "running|queued"; then
               echo "$K still in progress -- skipping delete (it'll be purged on the next cleanup)."

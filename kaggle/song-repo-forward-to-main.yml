@@ -12,8 +12,7 @@ name: Forward song specs to main repo
 # this copies it into the MAIN repo via the GitHub Contents API. The
 # PAT-authored commit fires the MAIN repo's matching trigger, and the Kaggle
 # kernel reads the fresh song:
-#   kaggle/songs.json  -> fires kaggle-trigger.yml   (stream #1: song only)
-#   kaggle/songs2.json -> fires kaggle-trigger-2.yml (stream #2: song + music video)
+#   kaggle/songs.json -> fires kaggle-trigger.yml
 # Files identical to the main repo's copy are skipped, so re-runs and unrelated
 # pushes never fire a spurious Kaggle render.
 #
@@ -24,7 +23,6 @@ on:
   push:
     paths:
       - "kaggle/songs.json"
-      - "kaggle/songs2.json"
   workflow_dispatch: {}
 
 concurrency:
@@ -69,7 +67,7 @@ jobs:
                       return e.code, {}
 
           failed = False
-          for path in ("kaggle/songs.json", "kaggle/songs2.json"):
+          for path in ("kaggle/songs.json",):
               if not os.path.exists(path):
                   print(f"-- {path}: not in this repo, skipping")
                   continue

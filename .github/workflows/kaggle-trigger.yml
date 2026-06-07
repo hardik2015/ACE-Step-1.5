@@ -14,6 +14,9 @@ name: Kaggle daily run (inject secrets, run on T4x2, purge)
 #   KAGGLE_API_TOKEN, MAIN_GITHUB_TOKEN (the clone PAT -- GITHUB_TOKEN is reserved),
 #   GDRIVE_FOLDER_ID, and GDRIVE_OAUTH_TOKEN  *or*  the trio
 #   GDRIVE_REFRESH_TOKEN + GDRIVE_CLIENT_ID + GDRIVE_CLIENT_SECRET.
+# Optional: GDRIVE_FOLDER_ID_KIDS -- used instead of GDRIVE_FOLDER_ID when
+# kaggle/songs.json carries a top-level "category": "kids" (the routine sets it
+# on kids-song days). No marker, or the secret unset -> normal folder.
 on:
   push:
     branches: [main]
@@ -38,10 +41,18 @@ jobs:
       - name: Regenerate notebook (placeholders)
         run: python kaggle/build_notebook.py
 
+      - name: Detect song category (kids -> kids Drive folder)
+        id: category
+        run: |
+          KIDS=$(python -c 'import json; d = json.load(open("kaggle/songs.json", encoding="utf-8")); cat = (d.get("category") if isinstance(d, dict) else "") or ""; print("true" if str(cat).strip().lower() == "kids" else "false")')
+          echo "kids=$KIDS" >> "$GITHUB_OUTPUT"
+          echo "kids song: $KIDS"
+
       - name: Replace placeholders with real secrets (no echo)
         env:
           MAIN_GITHUB_TOKEN: ${{ secrets.MAIN_GITHUB_TOKEN }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          # kids song + GDRIVE_FOLDER_ID_KIDS set -> kids folder, else normal folder
+          GDRIVE_FOLDER_ID: ${{ steps.category.outputs.kids == 'true' && secrets.GDRIVE_FOLDER_ID_KIDS || secrets.GDRIVE_FOLDER_ID }}
           GDRIVE_OAUTH_TOKEN: ${{ secrets.GDRIVE_OAUTH_TOKEN }}
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
           GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}

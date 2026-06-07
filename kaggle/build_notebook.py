@@ -172,10 +172,9 @@ CLAP_DEVICE    = "cpu"
 W_LYRIC        = 0.6      # blend weights for the final score (lyric clarity ...
 W_CLAP         = 0.4      # ... vs. style match). Only used when CLAP is active.
 
-# Music-video rendering (stream #2 only). build_notebook2.py patches MAKE_VIDEO
-# to True; stream #1 keeps False so its behavior is unchanged. For each song the
-# notebook searches Pixabay VIDEOS for song["pixabay_query"] (fallback: first
-# comma-segment of the caption), downloads enough clips to cover the song,
+# Music-video rendering (dormant -- set MAKE_VIDEO=True to enable). For each
+# song the notebook searches Pixabay VIDEOS for song["pixabay_query"] (fallback:
+# first comma-segment of the caption), downloads enough clips to cover the song,
 # normalizes + loops them with ffmpeg (NVENC on the T4 when available), burns
 # line-level lyrics as ASS subtitles (lines spread across the vocal window that
 # a tiny Whisper pass detects), and muxes the song audio -> <take>_MV.mp4 next
@@ -185,7 +184,7 @@ W_CLAP         = 0.4      # ... vs. style match). Only used when CLAP is active.
 # always produced. Best-effort like scoring: failure skips the video, never the
 # audio. NOTE: lyrics rendering assumes romanized (Hinglish) lyrics -- the
 # default DejaVu Sans font has no Devanagari glyphs.
-MAKE_VIDEO      = False                  # patched to True by build_notebook2.py
+MAKE_VIDEO      = False                  # dormant: flip to True to render MVs
 VIDEO_RES       = (1920, 1080)           # output WxH (clips scaled+cropped to fit)
 VIDEO_FPS       = 30
 VIDEO_MAX_CLIPS = 12                     # cap on distinct Pixabay clips per song
@@ -195,7 +194,7 @@ VIDEO_LYRICS    = True                   # burn lyrics overlay into the video
 WHISPER_VAD     = "tiny"                 # tiny Whisper just to find the vocal window
 
 # ----- IMPLEMENTATION --------------------------------------------------------
-import os, sys, json, time, shutil, subprocess, pathlib, datetime
+import os, sys, json, time, shutil, subprocess, pathlib
 import http.client
 import urllib.request
 import urllib.parse
@@ -376,7 +375,8 @@ def _build_request_body(song):
     body = dict(GEN_DEFAULTS)
     for k, v in song.items():
         # local-only keys, not GenerateMusicRequest fields
-        if k in ("title", "versions", "pixabay_query", "video_query"):
+        # ("category" routes the Drive upload folder workflow-side, e.g. "kids")
+        if k in ("title", "versions", "pixabay_query", "video_query", "category"):
             continue
         body[aliases.get(k, k)] = v
     return body
@@ -446,13 +446,16 @@ os.makedirs(LOCAL_OUT, exist_ok=True)
 manifest = []
 for i, song in enumerate(songs, 1):
     title = (song.get("title") or song.get("prompt") or song.get("caption") or f"song{i}")[:80]
+    # Filesystem-safe title for the output names: <title>_v<NN>.<ext>
+    # (Drive shows the name as-is; only swap characters that break paths.)
+    safe_title = "".join("_" if (c in '\\/:*?"<>|' or ord(c) < 32) else c
+                         for c in title).strip(" ._") or f"song{i}"
     n_versions = max(1, int(song.get("versions", 1) or 1))
     body = _build_request_body(song)            # "versions" is stripped inside
     print(f"\n[gen {i}/{len(songs)}] {title!r}  x{n_versions} version(s)")
 
     versions = []
     for v in range(1, n_versions + 1):
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         print(f"  -- version {v}/{n_versions}")
         submit = _api_post("/release_task", body)
         submit_data = (submit or {}).get("data") or {}
@@ -478,7 +481,14 @@ for i, song in enumerate(songs, 1):
             parsed = urllib.parse.urlparse(file_ref)
             local_path = urllib.parse.parse_qs(parsed.query).get("path", [""])[0]
             ext = pathlib.Path(local_path or file_ref).suffix or f".{GEN_DEFAULTS['audio_format']}"
-            dst = os.path.join(LOCAL_OUT, f"{stamp}_{i:03d}_v{v:02d}_{ai}{ext}")
+            # <title>_v<NN>.<ext>; rare extras (multi-file results, duplicate
+            # titles in a multi-song day) get a numeric suffix to stay unique.
+            base = f"{safe_title}_v{v:02d}" + (f"_{ai}" if len(results) > 1 else "")
+            dst = os.path.join(LOCAL_OUT, f"{base}{ext}")
+            dup = 2
+            while os.path.exists(dst):
+                dst = os.path.join(LOCAL_OUT, f"{base}_{dup}{ext}")
+                dup += 1
             if local_path and os.path.exists(local_path):
                 shutil.copy2(local_path, dst)            # same container: just copy
             else:
