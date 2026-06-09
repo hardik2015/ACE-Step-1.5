@@ -154,10 +154,11 @@ In Claude Code, run `/schedule` and create a daily routine with this prompt:
 > skill to write a `title`, a vivid `prompt` (caption: genre, instruments, mood,
 > vocals), and complete structured `lyrics` with section tags like `[verse]` /
 > `[chorus]`. Vary the genre and mood from day to day and avoid AI-flavored cliché
-> lyrics. Write the result to `kaggle/songs.json` (overwrite it) following
-> `kaggle/songs.example.json`, and set `"versions": 1` so the kernel renders a
-> single take of that one song. Then run:
-> `git add kaggle/songs.json && git commit -m "daily lyrics $(date +%F)" && git push origin main`.
+> lyrics. Write the result to `kaggle/kidssong.json` (overwrite it) following
+> `kaggle/songs.example.json`, set `"category": "kids"` (so the song-repo pipeline
+> takes the kids path and fires the Vecteezy video search), and set `"versions": 1`
+> so the kernel renders a single take of that one song. Then run:
+> `git add kaggle/kidssong.json && git commit -m "daily kids song $(date +%F)" && git push origin main`.
 
 - **Schedule:** routine at **07:00 IST** (cron `30 1 * * *` UTC). Its commit fires
   the GitHub Action immediately (event-driven) — no Kaggle scheduling needed.
