@@ -17,6 +17,9 @@ name: Kaggle daily run (inject secrets, run on T4x2, purge)
 # Optional: GDRIVE_FOLDER_ID_KIDS -- used instead of GDRIVE_FOLDER_ID when
 # kaggle/songs.json carries a top-level "category": "kids" (the routine sets it
 # on kids-song days). No marker, or the secret unset -> normal folder.
+# Optional: KIDS_APP_URL + KIDS_API_KEY -- when both set, a kids run posts every
+# take's Drive file id to <KIDS_APP_URL>/api/song-file (matched by song title) so
+# the kids-songs-web combine page can pick a version. Unset -> the post is skipped.
 on:
   push:
     branches: [main]
@@ -57,6 +60,10 @@ jobs:
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
           GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
           GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          # Optional: lets the kernel post the song's Drive take ids to kids-songs-web
+          # (matched by title) so the combine page can pick a version. Kids songs only.
+          KIDS_APP_URL: ${{ secrets.KIDS_APP_URL }}
+          KIDS_API_KEY: ${{ secrets.KIDS_API_KEY }}
         run: |
           python - <<'PY'
           import json, os
@@ -72,6 +79,8 @@ jobs:
               "__GDRIVE_REFRESH_TOKEN__": os.environ.get("GDRIVE_REFRESH_TOKEN", ""),
               "__GDRIVE_CLIENT_ID__":     os.environ.get("GDRIVE_CLIENT_ID", ""),
               "__GDRIVE_CLIENT_SECRET__": os.environ.get("GDRIVE_CLIENT_SECRET", ""),
+              "__KIDS_APP_URL__":         os.environ.get("KIDS_APP_URL", ""),
+              "__KIDS_API_KEY__":         os.environ.get("KIDS_API_KEY", ""),
           }
           n = 0
           for ph, val in mapping.items():

@@ -124,6 +124,8 @@ afterward — so nothing is stored on Kaggle. On the **private** repo →
 | `MAIN_GITHUB_TOKEN` | the fine-grained PAT from step 1b (clones the private repo) |
 | `GDRIVE_FOLDER_ID` | your Drive folder id |
 | `GDRIVE_OAUTH_TOKEN` **or** the trio `GDRIVE_REFRESH_TOKEN` + `GDRIVE_CLIENT_ID` + `GDRIVE_CLIENT_SECRET` | the Drive auth from step 1 |
+| `GDRIVE_FOLDER_ID_KIDS` *(optional)* | Drive folder for kids songs (`category: kids`); falls back to `GDRIVE_FOLDER_ID` if unset |
+| `KIDS_APP_URL` + `KIDS_API_KEY` *(optional)* | kids-songs-web deployment URL + its `API_SECRET_KEY`. When both set, a kids run posts every take's Drive file id to `<KIDS_APP_URL>/api/song-file` (matched by song title) so the combine page can pick a version — no manual paste. Unset → skipped. |
 
 No Kaggle-side secrets, no accelerator/internet toggles, no scheduler — the push
 sets the accelerator (`--accelerator NvidiaTeslaT4`) and internet
@@ -156,8 +158,8 @@ In Claude Code, run `/schedule` and create a daily routine with this prompt:
 > `[chorus]`. Vary the genre and mood from day to day and avoid AI-flavored cliché
 > lyrics. Write the result to `kaggle/kidssong.json` (overwrite it) following
 > `kaggle/songs.example.json`, set `"category": "kids"` (so the song-repo pipeline
-> takes the kids path and fires the Vecteezy video search), and set `"versions": 1`
-> so the kernel renders a single take of that one song. Then run:
+> takes the kids path and fires the Vecteezy video search), and set `"versions": 5`
+> so the kernel renders five takes you can pick between on the combine page. Then run:
 > `git add kaggle/kidssong.json && git commit -m "daily kids song $(date +%F)" && git push origin main`.
 
 - **Schedule:** routine at **07:00 IST** (cron `30 1 * * *` UTC). Its commit fires

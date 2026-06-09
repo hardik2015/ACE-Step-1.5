@@ -64,6 +64,8 @@ for _k, _v in {
     "GDRIVE_CLIENT_ID":     "__GDRIVE_CLIENT_ID__",
     "GDRIVE_CLIENT_SECRET": "__GDRIVE_CLIENT_SECRET__",
     "PIXABAY_API_KEY":      "__PIXABAY_API_KEY__",
+    "KIDS_APP_URL":         "__KIDS_APP_URL__",
+    "KIDS_API_KEY":         "__KIDS_API_KEY__",
 }.items():
     if _v and not (_v.startswith("__") and _v.endswith("__")):
         _os.environ[_k] = _v
@@ -997,6 +999,7 @@ if OUTPUT_MODE == "gdrive":
 
     UPLOAD_EXTS = {".mp3", ".wav", ".flac", ".opus", ".aac", ".mp4"}  # audio + rendered MVs
     uploaded = 0
+    drive_ids = {}                                  # basename -> Drive file id
     for p in pathlib.Path(LOCAL_OUT).rglob("*"):
         if p.is_file() and (p.suffix.lower() in UPLOAD_EXTS or p.name == "manifest.json"):
             meta = {"name": p.name, "parents": [folder]}
@@ -1004,10 +1007,49 @@ if OUTPUT_MODE == "gdrive":
                 body=meta,
                 media_body=MediaFileUpload(str(p), resumable=True),
                 fields="id, webViewLink", supportsAllDrives=True).execute()
+            drive_ids[p.name] = res.get("id")
             link = res.get("webViewLink") or res.get("id")
             print(f"[drive] {p.name} -> {link}")
             uploaded += 1
     print(f"[drive] {uploaded} file(s) uploaded.")
+
+    # 10b) Tell kids-songs-web every take's Drive file id (matched by song title)
+    # so the combine page lets you PICK a version -- no manual paste. Best-effort:
+    # kids songs only, and only when KIDS_APP_URL + KIDS_API_KEY are injected. A
+    # non-kids day, a missing search row, or a down app is a harmless no-op.
+    kids_app = (_kaggle_secret("KIDS_APP_URL") or "").rstrip("/")
+    kids_key = _kaggle_secret("KIDS_API_KEY") or ""
+    top_category = (str(songs_data.get("category") or "").strip().lower()
+                    if isinstance(songs_data, dict) else "")
+    if kids_app and kids_key:
+        for m in manifest:
+            song = songs[m["index"] - 1] if 0 <= m["index"] - 1 < len(songs) else {}
+            category = str(song.get("category") or top_category or "").strip().lower()
+            if category != "kids":
+                continue
+            # Collect ALL uploaded takes for this song (one per version).
+            takes = []
+            for ver in m.get("versions", []):
+                for path in ver.get("paths", []):
+                    name = os.path.basename(path)
+                    fid = drive_ids.get(name)
+                    if fid:
+                        takes.append({"version": ver.get("version"), "fileId": fid, "name": name})
+            if not takes:
+                print(f"[kids-web] no Drive ids for {m['title']!r}; skipping")
+                continue
+            try:
+                payload = json.dumps({"title": m["title"], "songFiles": takes}).encode()
+                req = urllib.request.Request(
+                    f"{kids_app}/api/song-file", data=payload, method="POST",
+                    headers={"Content-Type": "application/json", "x-api-key": kids_key})
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    print(f"[kids-web] {m['title']!r}: {len(takes)} take(s) -> "
+                          f"HTTP {r.status} {r.read().decode()[:200]}")
+            except urllib.error.HTTPError as exc:
+                print(f"[kids-web] {m['title']!r}: HTTP {exc.code} {exc.read().decode()[:200]}")
+            except Exception as exc:
+                print(f"[kids-web] {m['title']!r}: {type(exc).__name__}: {exc}")
 else:
     print(f"[local] outputs in {LOCAL_OUT}")
 '''
