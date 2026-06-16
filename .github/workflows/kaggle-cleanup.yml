@@ -7,8 +7,6 @@ name: Kaggle cleanup (delete kernel to purge injected secrets)
 # (confirmed). If a run is still in progress, the kernel is skipped so the run
 # can't be killed.
 on:
-  schedule:
-    - cron: "30 5 * * *"     # ~11:00 IST -- well after the ~07:00 IST generation finishes
   workflow_dispatch: {}
 
 jobs:
