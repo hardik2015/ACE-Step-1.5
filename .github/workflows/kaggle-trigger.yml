@@ -22,8 +22,6 @@ name: Kaggle daily run (inject secrets, run on T4x2, purge)
 # the kids-songs-web combine page can pick a version. Unset -> the post is skipped.
 on:
   push:
-    branches: [main]
-    paths: ["kaggle/songs.json"]
   workflow_dispatch: {}
 
 concurrency:
